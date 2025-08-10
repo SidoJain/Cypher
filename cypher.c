@@ -534,9 +534,9 @@ void editorSave() {
     char *buf = editorRowsToString(&len);
 
     int fp = open(E.filename,
-        O_RDWR |        // read and write
-        O_CREAT,        // create if doesnt exist
-        0644);          // permissions
+                  O_RDWR |     // read and write
+                      O_CREAT, // create if doesnt exist
+                  0644);       // permissions
     ftruncate(fp, len);
     write(fp, buf, len);
     close(fp);
