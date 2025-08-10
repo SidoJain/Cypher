@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <stdarg.h>
+#include <fcntl.h>
 
 /*** defines ***/
 
@@ -45,6 +46,7 @@
 /*** structs and enums ***/
 
 enum editorKey {
+    BACKSPACE = 127,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -119,11 +121,17 @@ void abFree(appendBuffer *);
 
 // File I/O
 void editorOpen(char *);
+char *editorRowsToString(int *);
+void editorSave();
 
 // Row Operations
 void editorAppendRow(char *, size_t);
 void editorUpdateRow(editorRow *);
 int editorRowCxToRx(editorRow *, int);
+void editorRowInsertChar(editorRow *, int, int);
+
+// Editor Operations
+void editorInsertChar(int);
 
 /*** main ***/
 
@@ -266,12 +274,30 @@ void editorProcessKeypress() {
             exit(0);
             break;
 
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
+
+        case '\r':
+            // TODO
+            break;
+
         case HOME_KEY:
             E.cursor_x = 0;
             break;
         case END_KEY:
             if (E.cursor_y < E.num_rows)
                 E.cursor_x = E.row[E.cursor_y].size;
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case DEL_KEY:
+            // TODO
+            break;
+        
+        case CTRL_KEY('l'):
+            // TODO
             break;
 
         case PAGE_UP:
@@ -288,6 +314,10 @@ void editorProcessKeypress() {
         case ARROW_LEFT:
         case ARROW_RIGHT:
             editorMoveCursor(c);
+            break;
+
+        default:
+            editorInsertChar(c);
             break;
     }
 }
@@ -479,6 +509,40 @@ void editorOpen(char *filename) {
     fclose(fp);
 }
 
+char *editorRowsToString(int *buf_len) {
+    int total_len = 0;
+    for (int i = 0; i < E.num_rows; i++)
+        total_len += E.row[i].size + 1;
+    *buf_len = total_len;
+
+    char *buf = malloc(total_len);
+    char *ptr = buf;
+    for (int j = 0; j < E.num_rows; j++) {
+        memcpy(ptr, E.row[j].chars, E.row[j].size);
+        ptr += E.row[j].size;
+        *ptr = '\n';
+        ptr++;
+    }
+
+    return buf;
+}
+
+void editorSave() {
+    if (E.filename == NULL) return;
+
+    int len;
+    char *buf = editorRowsToString(&len);
+
+    int fp = open(E.filename,
+        O_RDWR |        // read and write
+        O_CREAT,        // create if doesnt exist
+        0644);          // permissions
+    ftruncate(fp, len);
+    write(fp, buf, len);
+    close(fp);
+    free(buf);
+}
+
 void editorAppendRow(char *str, size_t len) {
     E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
 
@@ -527,4 +591,22 @@ int editorRowCxToRx(editorRow *row, int cursor_x) {
     }
 
     return render_x;
+}
+
+void editorRowInsertChar(editorRow *row, int at, int c) {
+    if (at < 0 || at > row->size)
+        at = row->size;
+    
+    row->chars = realloc(row->chars, row->size + 2);
+    memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+    row->size++;
+    row->chars[at] = c;
+    editorUpdateRow(row);
+}
+
+void editorInsertChar(int c) {
+    if (E.cursor_y == E.num_rows)
+        editorAppendRow("", 0);
+    editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
+    E.cursor_x++;
 }
