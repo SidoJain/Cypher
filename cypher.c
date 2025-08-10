@@ -29,7 +29,7 @@
 #define	STDERR_FILENO	2
 
 #define TAB_SIZE    8
-#define QUIT_TIMES  3
+#define QUIT_TIMES  2
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -131,9 +131,11 @@ void editorAppendRow(char *, size_t);
 void editorUpdateRow(editorRow *);
 int editorRowCxToRx(editorRow *, int);
 void editorRowInsertChar(editorRow *, int, int);
+void editorRowDeleteChar(editorRow *, int);
 
 // Editor Operations
 void editorInsertChar(int);
+void editorDeleteChar();
 
 /*** main ***/
 
@@ -303,7 +305,9 @@ void editorProcessKeypress() {
         case BACKSPACE:
         case CTRL_KEY('h'):
         case DEL_KEY:
-            // TODO
+            if (c == DEL_KEY)
+                editorMoveCursor(ARROW_RIGHT);
+            editorDeleteChar();
             break;
         
         case CTRL_KEY('l'):
@@ -631,9 +635,26 @@ void editorRowInsertChar(editorRow *row, int at, int c) {
     E.dirty++;
 }
 
+void editorRowDeleteChar(editorRow *row, int at) {
+    if (at < 0 || at >= row->size) return;
+
+    memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+    row->size--;
+    editorUpdateRow(row);
+    E.dirty++;
+}
+
 void editorInsertChar(int c) {
     if (E.cursor_y == E.num_rows)
         editorAppendRow("", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
     E.cursor_x++;
+}
+
+void editorDeleteChar() {
+    if (E.cursor_y == E.num_rows) return;
+
+    editorRow *row = &E.row[E.cursor_y];
+    if (E.cursor_x > 0)
+        editorRowDeleteChar(row, --E.cursor_x);
 }
