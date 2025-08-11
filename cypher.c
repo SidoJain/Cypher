@@ -92,7 +92,7 @@ typedef struct {
 
 editorConfig E;
 
-/*** declaration ***/
+/*** declarations ***/
 
 // Terminal
 void die(const char *);
