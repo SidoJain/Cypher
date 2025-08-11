@@ -344,7 +344,7 @@ void editorProcessKeypress() {
             editorSave();
             break;
         
-        case CTRL_KEY('f'):
+        case CTRL_KEY('f'):     // find
             editorFind();
             break;
 
@@ -745,9 +745,9 @@ char *editorRowsToString(int *buf_len) {
 
     char *buf = malloc(total_len);
     char *ptr = buf;
-    for (int j = 0; j < E.num_rows; j++) {
-        memcpy(ptr, E.row[j].chars, E.row[j].size);
-        ptr += E.row[j].size;
+    for (int i = 0; i < E.num_rows; i++) {
+        memcpy(ptr, E.row[i].chars, E.row[i].size);
+        ptr += E.row[i].size;
         *ptr = '\n';
         ptr++;
     }
@@ -1115,7 +1115,10 @@ void editorCutSelection() {
     int y2 = E.select_ey, x2 = E.select_ex;
     if (y1 > y2 || (y1 == y2 && x1 > x2)) {
         int tmpx = x1, tmpy = y1;
-        x1 = x2; y1 = y2; x2 = tmpx; y2 = tmpy;
+        x1 = x2;
+        y1 = y2;
+        x2 = tmpx;
+        y2 = tmpy;
     }
 
     if (y1 == y2) {
