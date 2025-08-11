@@ -1,5 +1,5 @@
 .vscode
 
 *.exe
+*.txt
 data_generator.c
-test.txt
