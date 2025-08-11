@@ -35,6 +35,9 @@ This README file has been completely written in Cypher.
 | `Ctrl-Q`       | Quit editor (warns if unsaved changes) |
 | `Ctrl-S`       | Save current file |
 | `Ctrl-F`       | Search in file |
+| `Ctrl-H`       | Open help page |
+| `Ctrl-C`       | Copy selected text |
+| `Ctrl-X`       | Cut selected text |
 | `Arrow Keys`   | Move cursor |
 | `Home / End`   | Move to start/end of line |
 | `Page Up`      | Scroll up by one screen |
@@ -42,6 +45,7 @@ This README file has been completely written in Cypher.
 | `Backspace`    | Delete character left of cursor |
 | `Delete`       | Delete character under cursor |
 | `Enter`        | Insert new line |
+| `Shift-Arrow`  | Select text |
 
 ## Installation & Compilation
 

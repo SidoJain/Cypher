@@ -52,6 +52,10 @@ enum editorKey {
     ARROW_RIGHT,
     ARROW_UP,
     ARROW_DOWN,
+    SHIFT_ARROW_LEFT,
+    SHIFT_ARROW_RIGHT,
+    SHIFT_ARROW_UP,
+    SHIFT_ARROW_DOWN,
     DEL_KEY,
     HOME_KEY,
     END_KEY,
@@ -81,6 +85,10 @@ typedef struct {
     char status_msg[80];
     time_t status_msg_time;
     struct termios original_termios;
+    int select_mode;
+    int select_sx, select_sy;
+    int select_ex, select_ey;
+    char *clipboard;
 } editorConfig;
 
 typedef struct {
@@ -114,6 +122,7 @@ void editorScroll();
 void editorDrawStatusBar(appendBuffer *);
 void editorSetStatusMsg(const char *, ...);
 void editorDrawMsgBar(appendBuffer *);
+void editorHelpScreen();
 
 // Initialize
 void initEditor();
@@ -147,6 +156,11 @@ void editorInsertNewline();
 void editorFind();
 void editorFindCallback(char *, int);
 
+// Cut-Copy Operations
+char *editorGetSelectedText();
+void editorCopySelection();
+void editorCutSelection();
+
 /*** main ***/
 
 int main(int argc, char *argv[]) {
@@ -155,7 +169,7 @@ int main(int argc, char *argv[]) {
     if (argc >= 2)
         editorOpen(argv[1]);
 
-    editorSetStatusMsg("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
+    editorSetStatusMsg("HELP: Ctrl-H");
 
     while (1) {
         editorRefreshScreen();
@@ -198,19 +212,30 @@ void disableRawMode() {
 int editorReadKey() {
     int nread;
     char c;
-    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-        if (nread == -1 && errno != EAGAIN) die ("read");
-    }
-    
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
+        if (nread == -1 && errno != EAGAIN)
+            die("read");
+
     if (c == ESCAPE_CHAR) {
-        char seq[3];
+        char seq[5] = {0};
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return ESCAPE_CHAR;
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return ESCAPE_CHAR;
 
         if (seq[0] == '[') {
             if (seq[1] >= '0' && seq[1] <= '9') {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return ESCAPE_CHAR;
-                if (seq[2] == '~') {
+                if (seq[2] == ';') {
+                    if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
+                    if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
+                    if (seq[3] == '2') {
+                        switch (seq[4]) {
+                            case 'A': return SHIFT_ARROW_UP;
+                            case 'B': return SHIFT_ARROW_DOWN;
+                            case 'C': return SHIFT_ARROW_RIGHT;
+                            case 'D': return SHIFT_ARROW_LEFT;
+                        }
+                    }
+                } else if (seq[2] == '~') {
                     switch (seq[1]) {
                         case '1': return HOME_KEY;
                         case '3': return DEL_KEY;
@@ -282,7 +307,7 @@ void editorProcessKeypress() {
     static int quit_times = QUIT_TIMES;
 
     switch (c) {
-        case CTRL_KEY('q'):
+        case CTRL_KEY('q'):     // quit
             if (E.dirty && quit_times > 0) {
                 editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more times to quit.", quit_times);
                 quit_times--;
@@ -294,8 +319,12 @@ void editorProcessKeypress() {
 
             exit(0);
             break;
+        
+        case CTRL_KEY('h'):     // help
+            editorHelpScreen();
+            break;
 
-        case CTRL_KEY('s'):
+        case CTRL_KEY('s'):     // save
             editorSave();
             break;
         
@@ -303,7 +332,15 @@ void editorProcessKeypress() {
             editorFind();
             break;
 
-        case '\r':
+        case CTRL_KEY('c'):     // copy
+            editorCopySelection();
+            break;
+
+        case CTRL_KEY('x'):     // cut
+            editorCutSelection();
+            break;
+
+        case '\r':              // new line (enter)
             editorInsertNewline();
             break;
 
@@ -316,7 +353,6 @@ void editorProcessKeypress() {
             break;
 
         case BACKSPACE:
-        case CTRL_KEY('h'):
         case DEL_KEY:
             if (c == DEL_KEY)
                 editorMoveCursor(ARROW_RIGHT);
@@ -332,10 +368,25 @@ void editorProcessKeypress() {
             }
             break;
 
-        case ARROW_UP:
-        case ARROW_DOWN:
+        case SHIFT_ARROW_LEFT:
+        case SHIFT_ARROW_RIGHT:
+        case SHIFT_ARROW_UP:
+        case SHIFT_ARROW_DOWN:
+            if (!E.select_mode) {
+                E.select_mode = 1;
+                E.select_sx = E.cursor_x;
+                E.select_sy = E.cursor_y;
+            }
+            editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            break;
+
         case ARROW_LEFT:
         case ARROW_RIGHT:
+        case ARROW_UP:
+        case ARROW_DOWN:
+            E.select_mode = 0;
             editorMoveCursor(c);
             break;
 
@@ -443,33 +494,35 @@ void editorDrawRows(appendBuffer *ab) {
     for (int y = 0; y < E.screen_rows; y++) {
         int file_row = y + E.row_offset;
         if (file_row >= E.num_rows) {
-            if (E.num_rows == 0 && y == E.screen_rows / 3) {
-                char welcome[80];
-                int welcome_len = snprintf(welcome, sizeof(welcome), "CYPHER editor -- version %s", CYPHER_VERSION);
-                if (welcome_len > E.screen_cols)
-                    welcome_len = E.screen_cols;
-                
-                int padding = (E.screen_cols - welcome_len) / 2;
-                if (padding) {
-                    abAppend(ab, "~", 1);
-                    padding--;
-                }
-                while (padding--)
-                    abAppend(ab, " ", 1);
-
-                abAppend(ab, welcome, welcome_len);
-            } else {
-                abAppend(ab, "~", 1);
-            }
+            abAppend(ab, "~", 1);
         } else {
             int len = E.row[file_row].rsize - E.col_offset;
-            if (len < 0)
-                len = 0;
-            if (len > E.screen_cols)
-                len = E.screen_cols;
-            abAppend(ab, &E.row[file_row].render[E.col_offset], len);
-        }
+            if (len < 0) len = 0;
+            if (len > E.screen_cols) len = E.screen_cols;
 
+            for (int j = 0; j < len; j++) {
+                int cx = editorRowRxToCx(&E.row[file_row], j + E.col_offset);
+                int sel = 0;
+                if (E.select_mode) {
+                    int y1 = E.select_sy, x1 = E.select_sx;
+                    int y2 = E.select_ey, x2 = E.select_ex;
+                    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+                        int tmpy = y1, tmpx = x1;
+                        y1 = y2;
+                        x1 = x2;
+                        y2 = tmpy;
+                        x2 = tmpx;
+                    }
+                    if (file_row > y1 && file_row < y2) sel = 1;
+                    else if (file_row == y1 && file_row == y2 && cx >= x1 && cx < x2) sel = 1;
+                    else if (file_row == y1 && file_row != y2 && cx >= x1) sel = 1;
+                    else if (file_row == y2 && file_row != y1 && cx < x2) sel = 1;
+                }
+                if (sel) abAppend(ab, INVERTED_COLORS, 4);
+                abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                if (sel) abAppend(ab, REMOVE_GRAPHICS, 3);
+            }
+        }
         abAppend(ab, CLEAR_LINE, 3);
         abAppend(ab, NEW_LINE, 2);
     }
@@ -529,6 +582,40 @@ void editorDrawMsgBar(appendBuffer *ab) {
         abAppend(ab, E.status_msg, msg_len);
 }
 
+void editorHelpScreen() {
+    write(STDOUT_FILENO, CLEAR_SCREEN, 4);
+    write(STDOUT_FILENO, CURSOR_RESET, 3);
+    write(STDOUT_FILENO, HIDE_CURSOR, 6);
+
+    char *help_text[] = {
+        "CYPHER Editor Help",
+        "",
+        "Keyboard Shortcuts:",
+        "  Ctrl-S               - Save",
+        "  Ctrl-Q               - Quit",
+        "  Ctrl-F               - Find",
+        "  Ctrl-C               - Copy selected text",
+        "  Ctrl-X               - Cut selected text",
+        "  Ctrl-H               - Show help page",
+        "  Shift + Arrow keys   - Select text",
+        "",
+        "Press any key to return..."
+    };
+
+    int lines = sizeof(help_text) / sizeof(help_text[0]);
+    int row = 1;
+    for (int i = 0; i < lines; i++) {
+        char buf[128];
+        int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H%s", row++, help_text[i]);
+        write(STDOUT_FILENO, buf, len);
+    }
+
+    editorReadKey();
+    write(STDOUT_FILENO, CLEAR_SCREEN, 4);
+    write(STDOUT_FILENO, CURSOR_RESET, 3);
+    write(STDOUT_FILENO, SHOW_CURSOR, 6);
+}
+
 void initEditor() {
     E.cursor_x = 0;
     E.cursor_y = 0;
@@ -541,6 +628,7 @@ void initEditor() {
     E.filename = NULL;
     E.status_msg[0] = '\0';
     E.status_msg_time = 0;
+    E.clipboard = NULL;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -833,4 +921,158 @@ void editorFindCallback(char *query, int key) {
             break;
         }
     }
+}
+
+char *editorGetSelectedText() {
+    if (!E.select_mode) return NULL;
+
+    int x1 = E.select_sx, y1 = E.select_sy;
+    int x2 = E.select_ex, y2 = E.select_ey;
+    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+        int tmpx = x1, tmpy = y1;
+        x1 = x2;
+        y1 = y2;
+        x2 = tmpx;
+        y2 = tmpy;
+    }
+
+    size_t total = 0;
+    for (int row = y1; row <= y2; row++) {
+        int startx = (row == y1) ? x1 : 0;
+        int endx = (row == y2) ? x2 : E.row[row].size;
+        if (endx > startx)
+            total += (endx - startx);
+        if (row != y2)
+            total++;
+    }
+
+    char *buf = malloc(total + 1);
+    char *ptr = buf;
+    for (int row = y1; row <= y2; row++) {
+        int startx = (row == y1) ? x1 : 0;
+        int endx = (row == y2) ? x2 : E.row[row].size;
+        if (endx > startx) {
+            memcpy(ptr, &E.row[row].chars[startx], endx - startx);
+            ptr += (endx - startx);
+        }
+        if (row != y2)
+            *ptr++ = '\n';
+    }
+    *ptr = '\0';
+    return buf;
+}
+
+void editorCopySelection() {
+    if (!E.select_mode) {
+        editorSetStatusMsg("No selection to copy");
+        return;
+    }
+    free(E.clipboard);
+    E.clipboard = editorGetSelectedText();
+    if (E.clipboard)
+        editorSetStatusMsg("Copied %zu bytes", strlen(E.clipboard));
+    
+    if (E.clipboard) {
+        #if defined(__APPLE__)      // macOS
+            FILE *pipe = popen("pbcopy", "w");
+        #elif defined(__linux__)    // Linux or WSL
+            FILE *pipe = NULL;
+            FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
+            if (test_pipe) {
+                char buf[128];
+                int is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
+                pclose(test_pipe);
+                if (is_wsl) {       // WSL
+                    pipe = popen("clip.exe", "w");
+                } else {            // Linux
+                    pipe = popen("xclip -selection clipboard", "w");
+                }
+            } else {
+                pipe = popen("xclip -selection clipboard", "w");
+            }
+        #else                       // Default fallback
+            FILE *pipe = popen("xclip -selection clipboard", "w");
+        #endif
+
+        if (pipe) {
+            fwrite(E.clipboard, 1, strlen(E.clipboard), pipe);
+            pclose(pipe);
+        } else {
+            editorSetStatusMsg("Copied %zu bytes (clipboard command failed)", strlen(E.clipboard));
+        }
+    }
+}
+
+void editorCutSelection() {
+    if (!E.select_mode) {
+        editorSetStatusMsg("No selection to cut");
+        return;
+    }
+    free(E.clipboard);
+    E.clipboard = editorGetSelectedText();
+
+    if (!E.clipboard) return;
+
+    #if defined(__APPLE__)      // macOS
+        FILE *pipe = popen("pbcopy", "w");
+    #elif defined(__linux__)    // Linux or WSL
+        FILE *pipe = NULL;
+        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
+        if (test_pipe) {
+            char buf[128];
+            int is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
+            pclose(test_pipe);
+            if (is_wsl) {       // WSL
+                pipe = popen("clip.exe", "w");
+            } else {            // Linux
+                pipe = popen("xclip -selection clipboard", "w");
+            }
+        } else {
+            pipe = popen("xclip -selection clipboard", "w");
+        }
+    #else                       // Default fallback
+        FILE *pipe = popen("xclip -selection clipboard", "w");
+    #endif
+
+    if (pipe) {
+        fwrite(E.clipboard, 1, strlen(E.clipboard), pipe);
+        pclose(pipe);
+    } else {
+        editorSetStatusMsg("Cut %zu bytes (clipboard command failed)", strlen(E.clipboard));
+    }
+
+    int y1 = E.select_sy, x1 = E.select_sx;
+    int y2 = E.select_ey, x2 = E.select_ex;
+    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+        int tmpx = x1, tmpy = y1;
+        x1 = x2; y1 = y2; x2 = tmpx; y2 = tmpy;
+    }
+
+    if (y1 == y2) {
+        memmove(&E.row[y1].chars[x1], &E.row[y1].chars[x2], E.row[y1].size - x2);
+        E.row[y1].size -= (x2 - x1);
+        E.row[y1].chars[E.row[y1].size] = '\0';
+        editorUpdateRow(&E.row[y1]);
+    } else {
+        E.row[y1].size = x1;
+        E.row[y1].chars[x1] = '\0';
+        editorUpdateRow(&E.row[y1]);
+
+        memmove(E.row[y2].chars, &E.row[y2].chars[x2], E.row[y2].size - x2);
+        E.row[y2].size -= x2;
+        E.row[y2].chars[E.row[y2].size] = '\0';
+        editorUpdateRow(&E.row[y2]);
+
+        editorRowAppendString(&E.row[y1], E.row[y2].chars, E.row[y2].size);
+        editorDeleteRow(y2);
+
+        for (int r = y2 - 1; r > y1; r--)
+            editorDeleteRow(r);
+    }
+
+    E.cursor_x = x1;
+    E.cursor_y = y1;
+    E.select_mode = 0;
+    E.dirty++;
+    editorSetStatusMsg("Cut %zu bytes", strlen(E.clipboard));
 }
