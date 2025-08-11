@@ -28,7 +28,7 @@
 #define	STDOUT_FILENO	1
 #define	STDERR_FILENO	2
 
-#define TAB_SIZE    8
+#define TAB_SIZE    4
 #define QUIT_TIMES  2
 
 #define NEW_LINE                "\r\n"
@@ -60,6 +60,10 @@ enum editorKey {
     CTRL_ARROW_RIGHT,
     CTRL_ARROW_UP,
     CTRL_ARROW_DOWN,
+    CTRL_SHIFT_ARROW_LEFT,
+    CTRL_SHIFT_ARROW_RIGHT,
+    CTRL_SHIFT_ARROW_UP,
+    CTRL_SHIFT_ARROW_DOWN,
     DEL_KEY,
     HOME_KEY,
     END_KEY,
@@ -237,6 +241,14 @@ int editorReadKey() {
                 if (seq[2] == ';') {
                     if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
                     if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
+                    if (seq[3] == '6') {
+                        switch (seq[4]) {
+                            case 'A': return CTRL_SHIFT_ARROW_UP;
+                            case 'B': return CTRL_SHIFT_ARROW_DOWN;
+                            case 'C': return CTRL_SHIFT_ARROW_RIGHT;
+                            case 'D': return CTRL_SHIFT_ARROW_LEFT;
+                        }
+                    }
                     if (seq[3] == '5') {
                         switch (seq[4]) {
                             case 'A': return CTRL_ARROW_UP;
@@ -292,7 +304,7 @@ int getWindowSize(int *rows, int *cols) {
 
     // fallback for calculating window size
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, 12) != 12)
+        if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1)
             return -1;
         return getCursorPosition(rows, cols);
     } else {
@@ -306,8 +318,8 @@ int getCursorPosition(int *rows, int *cols) {
     char buf[32];
     unsigned int i = 0;
 
-    if (write(STDOUT_FILENO, QUERY_CURSOR_POSITION, 4) != 4) return -1;
-    
+    if (write(STDOUT_FILENO, QUERY_CURSOR_POSITION, sizeof(QUERY_CURSOR_POSITION) - 1) != sizeof(QUERY_CURSOR_POSITION) - 1) return -1;
+
     while (i < sizeof(buf) - 1) {
         if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
         if (buf[i] == 'R') break;
@@ -315,7 +327,7 @@ int getCursorPosition(int *rows, int *cols) {
     }
     buf[i] = '\0';
 
-    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+    if (buf[0] != ESCAPE_CHAR || buf[1] != '[') return -1;
     if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
     return 0;
 }
@@ -332,9 +344,7 @@ void editorProcessKeypress() {
                 return;
             }
 
-            write(STDOUT_FILENO, CLEAR_SCREEN, 4);
-            write(STDOUT_FILENO, CURSOR_RESET, 3);
-
+            write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
             exit(0);
             break;
         
@@ -358,21 +368,12 @@ void editorProcessKeypress() {
             editorCutSelection();
             break;
 
-        case '\r':              // new line (enter)
+        case '\r':              // enter
             editorInsertNewline();
             break;
 
-        case CTRL_ARROW_LEFT:
-            editorMoveWordLeft();
-            break;
-        case CTRL_ARROW_RIGHT:
-            editorMoveWordRight();
-            break;
-        case CTRL_ARROW_UP:
-            editorScrollPageUp();
-            break;
-        case CTRL_ARROW_DOWN:
-            editorScrollPageDown();
+        case '\t':              // tab
+            editorInsertChar('\t');
             break;
 
         case HOME_KEY:
@@ -399,6 +400,19 @@ void editorProcessKeypress() {
             }
             break;
 
+        case CTRL_ARROW_LEFT:
+            editorMoveWordLeft();
+            break;
+        case CTRL_ARROW_RIGHT:
+            editorMoveWordRight();
+            break;
+        case CTRL_ARROW_UP:
+            editorScrollPageUp();
+            break;
+        case CTRL_ARROW_DOWN:
+            editorScrollPageDown();
+            break;
+
         case SHIFT_ARROW_LEFT:
         case SHIFT_ARROW_RIGHT:
         case SHIFT_ARROW_UP:
@@ -411,6 +425,30 @@ void editorProcessKeypress() {
             editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            break;
+
+        case CTRL_SHIFT_ARROW_LEFT:
+            if (!E.select_mode) {
+                E.select_mode = 1;
+                E.select_sx = E.cursor_x;
+                E.select_sy = E.cursor_y;
+            }
+            editorMoveWordLeft();
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            break;
+        case CTRL_SHIFT_ARROW_RIGHT:
+            if (!E.select_mode) {
+                E.select_mode = 1;
+                E.select_sx = E.cursor_x;
+                E.select_sy = E.cursor_y;
+            }
+            editorMoveWordRight();
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            break;
+        case CTRL_SHIFT_ARROW_UP:
+        case CTRL_SHIFT_ARROW_DOWN:
             break;
 
         case ARROW_LEFT:
@@ -462,7 +500,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t buf_size = 128;
     char *buf = malloc(buf_size);
     if (buf == NULL)
-        die("Out of memory (malloc)");
+        die("malloc");
 
     size_t buf_len = 0;
     buf[0] = '\0';
@@ -475,7 +513,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
         if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
             if (buf_len != 0)
                 buf[--buf_len] = '\0';
-        } else if (c == '\x1b') {
+        } else if (c == ESCAPE_CHAR) {
             editorSetStatusMsg("");
             if (callback)
                 callback(buf, c);
@@ -493,7 +531,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
                 buf_size *= 2;
                 buf = realloc(buf, buf_size);
                 if (buf == NULL)
-                    die("Out of memory (realloc)");
+                    die("realloc");
             }
             buf[buf_len++] = c;
             buf[buf_len] = '\0';
@@ -719,7 +757,7 @@ void editorCleanup() {
 void abAppend(appendBuffer *ab, const char *str, int len) {
     char *new = realloc(ab->b, ab->len + len);
     if (new == NULL)
-        die("Out of memory (realloc)");
+        die("realloc");
 
     memcpy(&new[ab->len], str, len);
     ab->b = new;
@@ -734,7 +772,7 @@ void editorOpen(char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
     if (E.filename == NULL)
-        die("Out of memory (strdup)");
+        die("strdup");
 
     FILE *fp = fopen(filename, "r");
     if (!fp) die("fopen");
@@ -760,7 +798,7 @@ char *editorRowsToString(int *buf_len) {
 
     char *buf = malloc(total_len);
     if (buf == NULL)
-        die("Out of memory (malloc)");
+        die("malloc");
 
     char *ptr = buf;
     for (int i = 0; i < E.num_rows; i++) {
@@ -811,13 +849,13 @@ void editorInsertRow(int at, char *str, size_t len) {
 
     E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
     if (E.row == NULL)
-        die("Out of memory (realloc)");
+        die("realloc");
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.num_rows - at));
 
     E.row[at].size = len;
     E.row[at].chars = malloc(len + 1);
     if (E.row[at].chars == NULL)
-        die("Out of memory (malloc)");
+        die("malloc");
 
     memcpy(E.row[at].chars, str, len);
     E.row[at].chars[len] = '\0';
@@ -838,7 +876,7 @@ void editorUpdateRow(editorRow *row) {
     free(row->render);
     row->render = malloc(row->size + tabs * (TAB_SIZE - 1) + 1);
     if (row->render == NULL)
-        die("Out of memory (malloc)");
+        die("malloc");
 
     int idx = 0;
     for (int i = 0; i < row->size; i++) {
@@ -886,7 +924,7 @@ void editorRowInsertChar(editorRow *row, int at, int c) {
     
     row->chars = realloc(row->chars, row->size + 2);
     if (row->chars == NULL)
-        die("Out of memory (realloc)");
+        die("realloc");
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
     row->size++;
     row->chars[at] = c;
@@ -920,7 +958,7 @@ void editorDeleteRow(int at) {
 void editorRowAppendString(editorRow *row, char *str, size_t len) {
     row->chars = realloc(row->chars, row->size + len + 1);
     if (row->chars == NULL)
-        die("Out of memory (realloc)");
+        die("realloc");
     memcpy(&row->chars[row->size], str, len);
     row->size += len;
     row->chars[row->size] = '\0';
@@ -986,7 +1024,7 @@ void editorFindCallback(char *query, int key) {
     static int last_match = -1;
     static int direction = 1;
 
-    if (key == '\r' || key == '\x1b') {
+    if (key == '\r' || key == ESCAPE_CHAR) {
         last_match = -1;
         direction = 1;
         return;
@@ -1047,7 +1085,7 @@ char *editorGetSelectedText() {
 
     char *buf = malloc(total + 1);
     if (buf == NULL)
-        die("Out of memory (malloc)");
+        die("malloc");
 
     char *ptr = buf;
     for (int row = y1; row <= y2; row++) {
