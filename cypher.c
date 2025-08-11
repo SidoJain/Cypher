@@ -56,6 +56,8 @@ enum editorKey {
     SHIFT_ARROW_RIGHT,
     SHIFT_ARROW_UP,
     SHIFT_ARROW_DOWN,
+    SHIFT_HOME,
+    SHIFT_END,
     CTRL_ARROW_LEFT,
     CTRL_ARROW_RIGHT,
     CTRL_ARROW_UP,
@@ -164,12 +166,14 @@ void editorRowAppendString(editorRow *, char *, size_t);
 void editorInsertChar(int);
 void editorDeleteChar();
 void editorInsertNewline();
+void editorDeleteSelectedText();
 
 // Find Operations
 void editorFind();
 void editorFindCallback(char *, int);
 
 // Cut-Copy Operations
+void editorCopyToSystemClipboard(const char *);
 char *editorGetSelectedText();
 void editorCopySelection();
 void editorCutSelection();
@@ -255,6 +259,12 @@ int editorReadKey() {
                             case 'B': return CTRL_ARROW_DOWN;
                             case 'C': return CTRL_ARROW_RIGHT;
                             case 'D': return CTRL_ARROW_LEFT;
+                        }
+                    }
+                    if (seq[3] == '2') {
+                        switch (seq[4]) {
+                            case 'H': return SHIFT_HOME;
+                            case 'F': return SHIFT_END;
                         }
                     }
                     if (seq[3] == '2') {
@@ -386,7 +396,7 @@ void editorProcessKeypress() {
 
         case BACKSPACE:
         case DEL_KEY:
-            if (c == DEL_KEY)
+            if (c == DEL_KEY && !E.select_mode)
                 editorMoveCursor(ARROW_RIGHT);
             editorDeleteChar();
             break;
@@ -449,6 +459,28 @@ void editorProcessKeypress() {
             break;
         case CTRL_SHIFT_ARROW_UP:
         case CTRL_SHIFT_ARROW_DOWN:
+            break;
+
+        case SHIFT_HOME:
+            if (!E.select_mode) {
+                E.select_mode = 1;
+                E.select_sx = E.cursor_x;
+                E.select_sy = E.cursor_y;
+            }
+            E.cursor_x = 0;
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            break;
+        case SHIFT_END:
+            if (!E.select_mode) {
+                E.select_mode = 1;
+                E.select_sx = E.cursor_x;
+                E.select_sy = E.cursor_y;
+            }
+            if (E.cursor_y < E.num_rows)
+                E.cursor_x = E.row[E.cursor_y].size;
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
             break;
 
         case ARROW_LEFT:
@@ -656,7 +688,7 @@ void editorDrawStatusBar(appendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, 4);
     char status[80], rstatus[80];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.filename ? E.filename : "[No Name]", E.num_rows, E.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cursor_y + 1, E.num_rows);
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor_y + 1, E.cursor_x + 1);
     if (len > E.screen_cols)
         len = E.screen_cols;
     abAppend(ab, status, len);
@@ -703,9 +735,6 @@ void editorHelpScreen() {
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-H               - Show help page",
-        "  Shift + Arrow keys   - Select text",
-        "  Ctrl  + Left/Right   - Navigate with word skip",
-        "  Ctrl  + Up/Down      - Scroll Up/Down",
         "",
         "Press any key to return..."
     };
@@ -967,6 +996,11 @@ void editorRowAppendString(editorRow *row, char *str, size_t len) {
 }
 
 void editorInsertChar(int c) {
+    if (E.select_mode) {
+        editorDeleteSelectedText();
+        E.select_mode = 0;
+    }
+
     if (E.cursor_y == E.num_rows)
         editorInsertRow(E.num_rows, "", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
@@ -974,6 +1008,11 @@ void editorInsertChar(int c) {
 }
 
 void editorDeleteChar() {
+    if (E.select_mode) {
+        editorDeleteSelectedText();
+        return;
+    }
+
     if (E.cursor_y == E.num_rows) return;
     if (E.cursor_x == 0 && E.cursor_y == 0) return;
 
@@ -1001,6 +1040,50 @@ void editorInsertNewline() {
 
     E.cursor_y++;
     E.cursor_x = 0;
+}
+
+void editorDeleteSelectedText() {
+    if (!E.select_mode)
+        return;
+
+    int y1 = E.select_sy, x1 = E.select_sx;
+    int y2 = E.select_ey, x2 = E.select_ex;
+
+    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+        int tmpx = x1, tmpy = y1;
+        x1 = x2;
+        y1 = y2;
+        x2 = tmpx;
+        y2 = tmpy;
+    }
+
+    if (y1 == y2) {
+        memmove(&E.row[y1].chars[x1], &E.row[y1].chars[x2], E.row[y1].size - x2);
+        E.row[y1].size -= (x2 - x1);
+        E.row[y1].chars[E.row[y1].size] = '\0';
+        editorUpdateRow(&E.row[y1]);
+    } else {
+        E.row[y1].size = x1;
+        E.row[y1].chars[x1] = '\0';
+        editorUpdateRow(&E.row[y1]);
+
+        memmove(E.row[y2].chars, &E.row[y2].chars[x2], E.row[y2].size - x2);
+        E.row[y2].size -= x2;
+        E.row[y2].chars[E.row[y2].size] = '\0';
+        editorUpdateRow(&E.row[y2]);
+
+        editorRowAppendString(&E.row[y1], E.row[y2].chars, E.row[y2].size);
+        editorDeleteRow(y2);
+
+        for (int r = y2 - 1; r > y1; r--)
+            editorDeleteRow(r);
+    }
+
+    E.cursor_x = x1;
+    E.cursor_y = y1;
+
+    E.select_mode = 0;
+    E.dirty++;
 }
 
 void editorFind() {

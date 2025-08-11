@@ -31,24 +31,25 @@ This README file has been completely written in Cypher.
 
 ## Keyboard Shortcuts
 
-| Shortcut          | Action |
-|-------------------|--------|
-| `Ctrl-Q`          | Quit editor (warns if unsaved changes) |
-| `Ctrl-S`          | Save current file |
-| `Ctrl-F`          | Search in file |
-| `Ctrl-H`          | Open help page |
-| `Ctrl-C`          | Copy selected text |
-| `Ctrl-X`          | Cut selected text |
-| `Arrow Keys`      | Move cursor |
-| `Home / End`      | Move to start/end of line |
-| `Page Up`         | Scroll up by one screen |
-| `Page Down`       | Scroll down by one screen |
-| `Backspace`       | Delete character left of cursor |
-| `Delete`          | Delete character under cursor |
-| `Enter`           | Insert new line |
-| `Shift-ArrowKeys` | Select text |
-| `Ctrl-Left/Right` | Skip words |
-| `Ctrl-Up/Down`    | Scroll up/down |
+| Shortcut                              | Action |
+|---------------------------------------|--------|
+| `Ctrl-Q`                              | Quit editor |
+| `Ctrl-S`                              | Save current file |
+| `Ctrl-F`                              | Search in file |
+| `Ctrl-H`                              | Open help page |
+| `Ctrl-C`                              | Copy selected text |
+| `Ctrl-X`                              | Cut selected text |
+| `Arrow Keys`                          | Move cursor |
+| `Home / End`                          | Move to start / end of line |
+| `Page Up`                             | Scroll up by one screen |
+| `Page Down`                           | Scroll down by one screen |
+| `Backspace`                           | Delete character left of cursor |
+| `Delete`                              | Delete character under cursor |
+| `Enter`                               | Insert new line |
+| `Shift + Arrow Keys / Home / End`     | Select text |
+| `Ctrl + Left / Right`                 | Skip words |
+| `Ctrl + Up / Down`                    | Scroll up / down |
+| `Ctrl + Shift + Left / Right`         | Combine Ctrl and Shift  |
 
 ## Installation & Compilation
 
