@@ -132,8 +132,9 @@ void editorSetStatusMsg(const char *, ...);
 void editorDrawMsgBar(appendBuffer *);
 void editorHelpScreen();
 
-// Initialize
+// Helper
 void initEditor();
+void editorCleanup();
 
 // Append Buffer
 void abAppend(appendBuffer *, const char *, int);
@@ -190,8 +191,8 @@ int main(int argc, char *argv[]) {
 /*** definitions ***/
 
 void die(const char *str) {
-    write(STDOUT_FILENO, CLEAR_SCREEN, 4);
-    write(STDOUT_FILENO, CURSOR_RESET, 3);
+    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
+    atexit(editorCleanup);
 
     perror(str);
     exit(1);
@@ -200,6 +201,7 @@ void die(const char *str) {
 void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
+    atexit(editorCleanup);
 
     struct termios raw = E.original_termios;
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);   // Input flags
@@ -459,6 +461,8 @@ void editorMoveCursor(int key) {
 char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t buf_size = 128;
     char *buf = malloc(buf_size);
+    if (buf == NULL)
+        die("Out of memory (malloc)");
 
     size_t buf_len = 0;
     buf[0] = '\0';
@@ -488,6 +492,8 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
             if (buf_len == buf_size - 1) {
                 buf_size *= 2;
                 buf = realloc(buf, buf_size);
+                if (buf == NULL)
+                    die("Out of memory (realloc)");
             }
             buf[buf_len++] = c;
             buf[buf_len] = '\0';
@@ -541,8 +547,7 @@ void editorRefreshScreen() {
     editorScroll();
 
     appendBuffer ab = APPEND_BUFFER_INIT;
-    abAppend(&ab, HIDE_CURSOR, 6);
-    abAppend(&ab, CURSOR_RESET, 3);
+    abAppend(&ab, HIDE_CURSOR CURSOR_RESET, sizeof(HIDE_CURSOR CURSOR_RESET) - 1);
 
     editorDrawRows(&ab);
     editorDrawStatusBar(&ab);
@@ -551,8 +556,7 @@ void editorRefreshScreen() {
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursor_y - E.row_offset) + 1, (E.render_x - E.col_offset) + 1);
     abAppend(&ab, buf, strlen(buf));
-
-    abAppend(&ab, SHOW_CURSOR, 6);
+    abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
 
     write(STDOUT_FILENO, ab.b, ab.len);
     abFree(&ab);
@@ -591,8 +595,7 @@ void editorDrawRows(appendBuffer *ab) {
                 if (sel) abAppend(ab, REMOVE_GRAPHICS, 3);
             }
         }
-        abAppend(ab, CLEAR_LINE, 3);
-        abAppend(ab, NEW_LINE, 2);
+        abAppend(ab, CLEAR_LINE NEW_LINE, sizeof(CLEAR_LINE NEW_LINE) - 1);
     }
 }
 
@@ -629,8 +632,7 @@ void editorDrawStatusBar(appendBuffer *ab) {
             len++;
         }
     }
-    abAppend(ab, REMOVE_GRAPHICS, 3);
-    abAppend(ab, NEW_LINE, 2);
+    abAppend(ab, REMOVE_GRAPHICS NEW_LINE, sizeof(REMOVE_GRAPHICS NEW_LINE) - 1);
 }
 
 void editorSetStatusMsg(const char *fmt, ...) {
@@ -651,9 +653,7 @@ void editorDrawMsgBar(appendBuffer *ab) {
 }
 
 void editorHelpScreen() {
-    write(STDOUT_FILENO, CLEAR_SCREEN, 4);
-    write(STDOUT_FILENO, CURSOR_RESET, 3);
-    write(STDOUT_FILENO, HIDE_CURSOR, 6);
+    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR) - 1);
 
     char *help_text[] = {
         "CYPHER Editor Help",
@@ -681,9 +681,7 @@ void editorHelpScreen() {
     }
 
     editorReadKey();
-    write(STDOUT_FILENO, CLEAR_SCREEN, 4);
-    write(STDOUT_FILENO, CURSOR_RESET, 3);
-    write(STDOUT_FILENO, SHOW_CURSOR, 6);
+    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR) - 1);
 }
 
 void initEditor() {
@@ -704,9 +702,24 @@ void initEditor() {
     E.screen_rows -= 2;
 }
 
+void editorCleanup() {
+    if (E.row != NULL) {
+        for (int i = 0; i < E.num_rows; i++)
+            editorFreeRow(&E.row[i]);
+        free(E.row);
+        E.row = NULL;
+    }
+    free(E.filename);
+    E.filename = NULL;
+
+    free(E.clipboard);
+    E.clipboard = NULL;
+}
+
 void abAppend(appendBuffer *ab, const char *str, int len) {
     char *new = realloc(ab->b, ab->len + len);
-    if (new == NULL) return;
+    if (new == NULL)
+        die("Out of memory (realloc)");
 
     memcpy(&new[ab->len], str, len);
     ab->b = new;
@@ -720,6 +733,8 @@ void abFree(appendBuffer *ab) {
 void editorOpen(char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
+    if (E.filename == NULL)
+        die("Out of memory (strdup)");
 
     FILE *fp = fopen(filename, "r");
     if (!fp) die("fopen");
@@ -744,6 +759,9 @@ char *editorRowsToString(int *buf_len) {
     *buf_len = total_len;
 
     char *buf = malloc(total_len);
+    if (buf == NULL)
+        die("Out of memory (malloc)");
+
     char *ptr = buf;
     for (int i = 0; i < E.num_rows; i++) {
         memcpy(ptr, E.row[i].chars, E.row[i].size);
@@ -792,10 +810,15 @@ void editorInsertRow(int at, char *str, size_t len) {
     if (at < 0 || at > E.num_rows) return;
 
     E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
+    if (E.row == NULL)
+        die("Out of memory (realloc)");
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.num_rows - at));
 
     E.row[at].size = len;
     E.row[at].chars = malloc(len + 1);
+    if (E.row[at].chars == NULL)
+        die("Out of memory (malloc)");
+
     memcpy(E.row[at].chars, str, len);
     E.row[at].chars[len] = '\0';
 
@@ -814,6 +837,8 @@ void editorUpdateRow(editorRow *row) {
             tabs++;
     free(row->render);
     row->render = malloc(row->size + tabs * (TAB_SIZE - 1) + 1);
+    if (row->render == NULL)
+        die("Out of memory (malloc)");
 
     int idx = 0;
     for (int i = 0; i < row->size; i++) {
@@ -860,6 +885,8 @@ void editorRowInsertChar(editorRow *row, int at, int c) {
         at = row->size;
     
     row->chars = realloc(row->chars, row->size + 2);
+    if (row->chars == NULL)
+        die("Out of memory (realloc)");
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
     row->size++;
     row->chars[at] = c;
@@ -892,6 +919,8 @@ void editorDeleteRow(int at) {
 
 void editorRowAppendString(editorRow *row, char *str, size_t len) {
     row->chars = realloc(row->chars, row->size + len + 1);
+    if (row->chars == NULL)
+        die("Out of memory (realloc)");
     memcpy(&row->chars[row->size], str, len);
     row->size += len;
     row->chars[row->size] = '\0';
@@ -1017,6 +1046,9 @@ char *editorGetSelectedText() {
     }
 
     char *buf = malloc(total + 1);
+    if (buf == NULL)
+        die("Out of memory (malloc)");
+
     char *ptr = buf;
     for (int row = y1; row <= y2; row++) {
         int startx = (row == y1) ? x1 : 0;
