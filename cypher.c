@@ -56,6 +56,10 @@ enum editorKey {
     SHIFT_ARROW_RIGHT,
     SHIFT_ARROW_UP,
     SHIFT_ARROW_DOWN,
+    CTRL_ARROW_LEFT,
+    CTRL_ARROW_RIGHT,
+    CTRL_ARROW_UP,
+    CTRL_ARROW_DOWN,
     DEL_KEY,
     HOME_KEY,
     END_KEY,
@@ -114,6 +118,10 @@ int getCursorPosition(int *, int *);
 void editorProcessKeypress();
 void editorMoveCursor(int);
 char *editorPrompt(char *, void (*)(char *, int));
+void editorMoveWordLeft();
+void editorMoveWordRight();
+void editorScrollPageUp();
+void editorScrollPageDown();
 
 // Output
 void editorRefreshScreen();
@@ -227,6 +235,14 @@ int editorReadKey() {
                 if (seq[2] == ';') {
                     if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
                     if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
+                    if (seq[3] == '5') {
+                        switch (seq[4]) {
+                            case 'A': return CTRL_ARROW_UP;
+                            case 'B': return CTRL_ARROW_DOWN;
+                            case 'C': return CTRL_ARROW_RIGHT;
+                            case 'D': return CTRL_ARROW_LEFT;
+                        }
+                    }
                     if (seq[3] == '2') {
                         switch (seq[4]) {
                             case 'A': return SHIFT_ARROW_UP;
@@ -342,6 +358,19 @@ void editorProcessKeypress() {
 
         case '\r':              // new line (enter)
             editorInsertNewline();
+            break;
+
+        case CTRL_ARROW_LEFT:
+            editorMoveWordLeft();
+            break;
+        case CTRL_ARROW_RIGHT:
+            editorMoveWordRight();
+            break;
+        case CTRL_ARROW_UP:
+            editorScrollPageUp();
+            break;
+        case CTRL_ARROW_DOWN:
+            editorScrollPageDown();
             break;
 
         case HOME_KEY:
@@ -466,6 +495,45 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
 
         if (callback)
             callback(buf, c);
+    }
+}
+
+void editorMoveWordLeft() {
+    if (E.cursor_y >= E.num_rows) return;
+
+    while (E.cursor_x > 0 && isspace(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+        E.cursor_x--;
+    while (E.cursor_x > 0 && !isspace(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+        E.cursor_x--;
+}
+
+void editorMoveWordRight() {
+    if (E.cursor_y >= E.num_rows) return;
+
+    int len = E.row[E.cursor_y].size;
+    while (E.cursor_x < len && !isspace(E.row[E.cursor_y].chars[E.cursor_x]))
+        E.cursor_x++;
+    while (E.cursor_x < len && isspace(E.row[E.cursor_y].chars[E.cursor_x]))
+        E.cursor_x++;
+}
+
+void editorScrollPageUp() {
+    if (E.row_offset > 0) {
+        int scroll_amount = 1;
+        E.row_offset -= scroll_amount;
+        E.cursor_y -= scroll_amount;
+        if (E.cursor_y < 0)
+            E.cursor_y = 0;
+    }
+}
+
+void editorScrollPageDown() {
+    if (E.row_offset < E.num_rows - E.screen_rows) {
+        int scroll_amount = 1;
+        E.row_offset += scroll_amount;
+        E.cursor_y += scroll_amount;
+        if (E.cursor_y >= E.num_rows)
+            E.cursor_y = E.num_rows - 1;
     }
 }
 
@@ -598,6 +666,8 @@ void editorHelpScreen() {
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-H               - Show help page",
         "  Shift + Arrow keys   - Select text",
+        "  Ctrl  + Left/Right   - Navigate with word skip",
+        "  Ctrl  + Up/Down      - Scroll Up/Down",
         "",
         "Press any key to return..."
     };

@@ -14,6 +14,7 @@ This README file has been completely written in Cypher.
   - Arrow keys for cursor movement.
   - Home/End keys to jump to start/end of a line.
   - Page Up/Page Down for fast scrolling.
+  - `Ctrl-ArrowKeys` for fast navigation.
 
 - **Editing Operations**
   - Insert text anywhere.
@@ -30,22 +31,24 @@ This README file has been completely written in Cypher.
 
 ## Keyboard Shortcuts
 
-| Shortcut       | Action |
-|----------------|--------|
-| `Ctrl-Q`       | Quit editor (warns if unsaved changes) |
-| `Ctrl-S`       | Save current file |
-| `Ctrl-F`       | Search in file |
-| `Ctrl-H`       | Open help page |
-| `Ctrl-C`       | Copy selected text |
-| `Ctrl-X`       | Cut selected text |
-| `Arrow Keys`   | Move cursor |
-| `Home / End`   | Move to start/end of line |
-| `Page Up`      | Scroll up by one screen |
-| `Page Down`    | Scroll down by one screen |
-| `Backspace`    | Delete character left of cursor |
-| `Delete`       | Delete character under cursor |
-| `Enter`        | Insert new line |
-| `Shift-Arrow`  | Select text |
+| Shortcut          | Action |
+|-------------------|--------|
+| `Ctrl-Q`          | Quit editor (warns if unsaved changes) |
+| `Ctrl-S`          | Save current file |
+| `Ctrl-F`          | Search in file |
+| `Ctrl-H`          | Open help page |
+| `Ctrl-C`          | Copy selected text |
+| `Ctrl-X`          | Cut selected text |
+| `Arrow Keys`      | Move cursor |
+| `Home / End`      | Move to start/end of line |
+| `Page Up`         | Scroll up by one screen |
+| `Page Down`       | Scroll down by one screen |
+| `Backspace`       | Delete character left of cursor |
+| `Delete`          | Delete character under cursor |
+| `Enter`           | Insert new line |
+| `Shift-ArrowKeys` | Select text |
+| `Ctrl-Left/Right` | Skip words |
+| `Ctrl-Up/Down`    | Scroll up/down |
 
 ## Installation & Compilation
 
