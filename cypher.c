@@ -19,7 +19,7 @@
 
 /*** defines ***/
 
-#define CYPHER_VERSION "0.0.1"
+#define CYPHER_VERSION "1.0.0"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
 #define APPEND_BUFFER_INIT  {NULL, 0}
@@ -28,8 +28,9 @@
 #define	STDOUT_FILENO	1
 #define	STDERR_FILENO	2
 
-#define TAB_SIZE    4
-#define QUIT_TIMES  2
+#define TAB_SIZE                4
+#define QUIT_TIMES              2
+#define UNDO_REDO_STACK_SIZE    100
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -113,9 +114,24 @@ typedef struct {
     int len;
 } appendBuffer;
 
+typedef struct {
+    char *buffer;
+    int buf_len;
+    int cursor_x;
+    int cursor_y;
+    int select_mode;
+    int select_sx, select_sy;
+    int select_ex, select_ey;
+} editorState;
+
 /*** data ***/
 
 editorConfig E;
+
+editorState undo_stack[UNDO_REDO_STACK_SIZE];
+int undo_top = -1;
+editorState redo_stack[UNDO_REDO_STACK_SIZE];
+int redo_top = -1;
 
 /*** declarations ***/
 
@@ -145,8 +161,8 @@ void editorSetStatusMsg(const char *, ...);
 void editorDrawMsgBar(appendBuffer *);
 void editorHelpScreen();
 
-// Helper
-void initEditor();
+// Editor
+void editorInit();
 void editorCleanup();
 
 // Append Buffer
@@ -188,12 +204,20 @@ void editorPaste();
 
 // Jump Operations
 void editorJump();
+void editorJumpCallback(char *, int);
+
+// Undo-Redo Operations
+void freeEditorState(editorState *);
+void saveEditorStateForUndo();
+void restoreEditorState(editorState *);
+void editorUndo();
+void editorRedo();
 
 /*** main ***/
 
 int main(int argc, char *argv[]) {
     enableRawMode();
-    initEditor();
+    editorInit();
     if (argc >= 2)
         editorOpen(argv[1]);
 
@@ -414,6 +438,14 @@ void editorProcessKeypress() {
             editorJump();
             break;
 
+        case CTRL_KEY('z'):     // undo
+            editorUndo();
+            break;
+
+        case CTRL_KEY('y'):     // redo
+            editorRedo();
+            break;
+
         case '\r':              // enter
             editorInsertNewline();
             break;
@@ -435,6 +467,8 @@ void editorProcessKeypress() {
         case DEL_KEY:
             if (c == DEL_KEY && !E.select_mode)
                 editorMoveCursor(ARROW_RIGHT);
+            if (E.select_mode)
+                saveEditorStateForUndo();
             editorDeleteChar();
             break;
 
@@ -805,6 +839,8 @@ void editorHelpScreen() {
         "  Ctrl-F               - Find",
         "  Ctrl-G / L / _       - Jump to line",
         "  Ctrl-A               - Select all",
+        "  Ctrl-Z               - Undo last major change",
+        "  Ctrl-Y               - Redo last major change",
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
@@ -825,7 +861,7 @@ void editorHelpScreen() {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR) - 1);
 }
 
-void initEditor() {
+void editorInit() {
     E.cursor_x = 0;
     E.cursor_y = 0;
     E.render_x = 0;
@@ -1092,6 +1128,7 @@ void editorRowAppendString(editorRow *row, char *str, size_t len) {
 
 void editorInsertChar(int c) {
     if (E.select_mode) {
+        saveEditorStateForUndo();
         editorDeleteSelectedText();
         E.select_mode = 0;
     }
@@ -1387,6 +1424,7 @@ void editorCutSelection() {
         return;
     }
 
+    saveEditorStateForUndo();
     free(E.clipboard);
     E.clipboard = editorGetSelectedText();
     if (!E.clipboard) return;
@@ -1425,6 +1463,7 @@ void editorPaste() {
         return;
     }
 
+    saveEditorStateForUndo();
     char chunk[256];
     size_t len;
     while ((len = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
@@ -1474,34 +1513,153 @@ void editorPaste() {
 }
 
 void editorJump() {
-    char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", NULL);
-    if (input == NULL) {
+    int saved_cursor_x = E.cursor_x;
+    int saved_cursor_y = E.cursor_y;
+    int saved_col_offset = E.col_offset;
+    int saved_row_offset = E.row_offset;
+
+    char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", editorJumpCallback);
+
+    if (input) {
+        free(input);
+        if (E.cursor_x == saved_cursor_x && E.cursor_y == saved_cursor_y && E.col_offset == saved_col_offset && E.row_offset == saved_row_offset)
+            editorSetStatusMsg("Invalid input");
+        else
+            editorSetStatusMsg("Jumped");
+    } else {
+        E.cursor_x = saved_cursor_x;
+        E.cursor_y = saved_cursor_y;
+        E.col_offset = saved_col_offset;
+        E.row_offset = saved_row_offset;
         editorSetStatusMsg("Jump cancelled");
-        return;
     }
+}
+
+void editorJumpCallback(char *buf, int key) {
+    if (key == '\r' || key == ESCAPE_CHAR)
+        return;
 
     int row = 0, col = 1;
-    if (sscanf(input, "%d:%d", &row, &col) != 2) {
-        if (sscanf(input, "%d", &row) != 1) {
-            editorSetStatusMsg("Invalid format. Use `row:col` or `row`.");
-            free(input);
-            return;
-        }
-    }
-    free(input);
+    if (sscanf(buf, "%d:%d", &row, &col) != 2)
+        sscanf(buf, "%d", &row);
 
-    row -= 1;
-    col -= 1;
-    if (row < 0) row = 0;
+    row = row > 0 ? row - 1 : 0;
+    col = col > 0 ? col - 1 : 0;
+
     if (row >= E.num_rows) row = E.num_rows - 1;
+    if (row < 0) row = 0;
     if (col < 0) col = 0;
-    if (row >= 0 && row < E.num_rows)
-        if (col > E.row[row].size)
-            col = E.row[row].size;
+    if (row >= 0 && row < E.num_rows && col > E.row[row].size) col = E.row[row].size;
 
     E.cursor_y = row;
     E.cursor_x = col;
-
     editorScroll();
-    editorSetStatusMsg("Jumped to %d:%d", row + 1, col + 1);
+}
+
+void freeEditorState(editorState *state) {
+    if (state->buffer) free(state->buffer);
+    state->buffer = NULL;
+}
+
+void saveEditorStateForUndo() {
+    if (undo_top >= UNDO_REDO_STACK_SIZE - 1)
+        return;
+
+    for (int i = 0; i <= redo_top; i++)
+        freeEditorState(&redo_stack[i]);
+    redo_top = -1;
+
+    undo_top++;
+    editorState *state = &undo_stack[undo_top];
+
+    state->buffer = editorRowsToString(&state->buf_len);
+    state->cursor_x = E.cursor_x;
+    state->cursor_y = E.cursor_y;
+    state->select_mode = E.select_mode;
+    state->select_sx = E.select_sx;
+    state->select_sy = E.select_sy;
+    state->select_ex = E.select_ex;
+    state->select_ey = E.select_ey;
+}
+
+void restoreEditorState(editorState *state) {
+    for (int i = 0; i < E.num_rows; i++)
+        editorFreeRow(&E.row[i]);
+    free(E.row);
+    E.row = NULL;
+    E.num_rows = 0;
+
+    size_t start = 0;
+    for (int i = 0; i < state->buf_len; i++) {
+        if (state->buffer[i] == '\n') {
+            editorInsertRow(E.num_rows, &state->buffer[start], i - start);
+            start = i + 1;
+        }
+    }
+
+    E.cursor_x = state->cursor_x;
+    E.cursor_y = state->cursor_y;
+    E.select_mode = state->select_mode;
+    E.select_sx = state->select_sx;
+    E.select_sy = state->select_sy;
+    E.select_ex = state->select_ex;
+    E.select_ey = state->select_ey;
+
+    E.dirty++;
+}
+
+void editorUndo() {
+    if (undo_top < 0) {
+        editorSetStatusMsg("Nothing to undo");
+        return;
+    }
+
+    if (redo_top < UNDO_REDO_STACK_SIZE - 1) {
+        redo_top++;
+        editorState *state = &redo_stack[redo_top];
+
+        state->buffer = editorRowsToString(&state->buf_len);
+        state->cursor_x = E.cursor_x;
+        state->cursor_y = E.cursor_y;
+        state->select_mode = E.select_mode;
+        state->select_sx = E.select_sx;
+        state->select_sy = E.select_sy;
+        state->select_ex = E.select_ex;
+        state->select_ey = E.select_ey;
+    }
+
+    editorState *undo_st = &undo_stack[undo_top];
+    restoreEditorState(undo_st);
+
+    freeEditorState(undo_st);
+    undo_top--;
+    editorSetStatusMsg("Undo");
+}
+
+void editorRedo() {
+    if (redo_top < 0) {
+        editorSetStatusMsg("Nothing to redo");
+        return;
+    }
+
+    if (undo_top < UNDO_REDO_STACK_SIZE - 1) {
+        undo_top++;
+        editorState *state = &undo_stack[undo_top];
+
+        state->buffer = editorRowsToString(&state->buf_len);
+        state->cursor_x = E.cursor_x;
+        state->cursor_y = E.cursor_y;
+        state->select_mode = E.select_mode;
+        state->select_sx = E.select_sx;
+        state->select_sy = E.select_sy;
+        state->select_ex = E.select_ex;
+        state->select_ey = E.select_ey;
+    }
+
+    editorState *redo_st = &redo_stack[redo_top];
+    restoreEditorState(redo_st);
+
+    freeEditorState(redo_st);
+    redo_top--;
+    editorSetStatusMsg("Redo");
 }

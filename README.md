@@ -9,6 +9,7 @@ This README file has been completely written in Cypher.
 - **File Editing**
   - Open and edit text files directly from the terminal.
   - Save changed (`Ctrl-S`) with overwrite support.
+  - Undo (`Ctrl-Z`) and Redo (`Ctrl-Y`) functionality.
 
 - **Navigation**
   - Arrow keys for cursor movement.
@@ -44,6 +45,8 @@ This README file has been completely written in Cypher.
 | `Ctrl-X`                              | Cut selected text |
 | `Ctrl-V`                              | Paste from clipboard |
 | `Ctrl-G / L / _`                      | Jump to line |
+| `Ctrl-Z`                              | Undo last major change |
+| `Ctrl-Y`                              | Redo last major change |
 | `Arrow Keys`                          | Move cursor |
 | `Home / End`                          | Move to start / end of line |
 | `Page Up`                             | Scroll up by one screen |
