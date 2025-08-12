@@ -172,8 +172,7 @@ void editorDeleteSelectedText();
 void editorFind();
 void editorFindCallback(char *, int);
 
-// Cut-Copy Operations
-void editorCopyToSystemClipboard(const char *);
+// Clipboard Operations
 char *editorGetSelectedText();
 void editorCopySelection();
 void editorCutSelection();
