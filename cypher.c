@@ -99,8 +99,10 @@ typedef struct {
     time_t status_msg_time;
     struct termios original_termios;
     int select_mode;
-    int select_sx, select_sy;
-    int select_ex, select_ey;
+    int select_sx;
+    int select_sy;
+    int select_ex;
+    int select_ey;
     char *clipboard;
     char *find_query;
     int *find_match_lines;
