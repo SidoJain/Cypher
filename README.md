@@ -39,6 +39,7 @@ This README file has been completely written in Cypher.
 | `Ctrl-H`                              | Open help page |
 | `Ctrl-C`                              | Copy selected text |
 | `Ctrl-X`                              | Cut selected text |
+| `Ctrl-V`                              | Paste from clipboard |
 | `Arrow Keys`                          | Move cursor |
 | `Home / End`                          | Move to start / end of line |
 | `Page Up`                             | Scroll up by one screen |

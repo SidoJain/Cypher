@@ -173,9 +173,11 @@ void editorFind();
 void editorFindCallback(char *, int);
 
 // Clipboard Operations
+void clipboardCopyToSystem(const char *);
 char *editorGetSelectedText();
 void editorCopySelection();
 void editorCutSelection();
+void editorPaste();
 
 /*** main ***/
 
@@ -376,13 +378,18 @@ void editorProcessKeypress() {
         case CTRL_KEY('x'):     // cut
             editorCutSelection();
             break;
+        
+        case CTRL_KEY('v'):     // paste
+            editorPaste();
+            break;
 
         case '\r':              // enter
             editorInsertNewline();
             break;
 
         case '\t':              // tab
-            editorInsertChar('\t');
+            for (int i = 0; i < 4; i++)
+                editorInsertChar(' ');
             break;
 
         case HOME_KEY:
@@ -733,6 +740,7 @@ void editorHelpScreen() {
         "  Ctrl-F               - Find",
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
+        "  Ctrl-V               - Paste from clipboard",
         "  Ctrl-H               - Show help page",
         "",
         "Press any key to return..."
@@ -1142,6 +1150,37 @@ void editorFindCallback(char *query, int key) {
     }
 }
 
+void clipboardCopyToSystem(const char *data) {
+    if (!data) return;
+    FILE *pipe = NULL;
+
+    #if defined(__APPLE__)          // macOS
+        pipe = popen("pbcopy", "w");
+    #elif defined(__linux__)        // Linux or WSL
+        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
+        int is_wsl = 0;
+        if (test_pipe) {
+            char buf[128];
+            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
+            pclose(test_pipe);
+        }
+
+        if (is_wsl)                 // WSL
+            pipe = popen("clip.exe", "w");
+        else                        // Linux
+            pipe = popen("xclip -selection clipboard", "w");
+    #else                           // Default Fallback
+        pipe = popen("xclip -selection clipboard", "w");
+    #endif
+
+    if (pipe) {
+        fwrite(data, 1, strlen(data), pipe);
+        pclose(pipe);
+    } else {
+        editorSetStatusMsg("Unable to copy to system clipboard");
+    }
+}
+
 char *editorGetSelectedText() {
     if (!E.select_mode) return NULL;
 
@@ -1189,39 +1228,13 @@ void editorCopySelection() {
         editorSetStatusMsg("No selection to copy");
         return;
     }
+
     free(E.clipboard);
     E.clipboard = editorGetSelectedText();
-    if (E.clipboard)
-        editorSetStatusMsg("Copied %zu bytes", strlen(E.clipboard));
-    
-    if (E.clipboard) {
-        #if defined(__APPLE__)      // macOS
-            FILE *pipe = popen("pbcopy", "w");
-        #elif defined(__linux__)    // Linux or WSL
-            FILE *pipe = NULL;
-            FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
-            if (test_pipe) {
-                char buf[128];
-                int is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
-                pclose(test_pipe);
-                if (is_wsl) {       // WSL
-                    pipe = popen("clip.exe", "w");
-                } else {            // Linux
-                    pipe = popen("xclip -selection clipboard", "w");
-                }
-            } else {
-                pipe = popen("xclip -selection clipboard", "w");
-            }
-        #else                       // Default fallback
-            FILE *pipe = popen("xclip -selection clipboard", "w");
-        #endif
 
-        if (pipe) {
-            fwrite(E.clipboard, 1, strlen(E.clipboard), pipe);
-            pclose(pipe);
-        } else {
-            editorSetStatusMsg("Copied %zu bytes (clipboard command failed)", strlen(E.clipboard));
-        }
+    if (E.clipboard) {
+        editorSetStatusMsg("Copied %zu bytes", strlen(E.clipboard));
+        clipboardCopyToSystem(E.clipboard);
     }
 }
 
@@ -1230,74 +1243,89 @@ void editorCutSelection() {
         editorSetStatusMsg("No selection to cut");
         return;
     }
+
     free(E.clipboard);
     E.clipboard = editorGetSelectedText();
-
     if (!E.clipboard) return;
 
-    #if defined(__APPLE__)      // macOS
-        FILE *pipe = popen("pbcopy", "w");
-    #elif defined(__linux__)    // Linux or WSL
-        FILE *pipe = NULL;
+    clipboardCopyToSystem(E.clipboard);
+    editorDeleteSelectedText();
+
+    editorSetStatusMsg("Cut %zu bytes", strlen(E.clipboard));
+}
+
+void editorPaste() {
+    char *clipboard_data = NULL;
+    size_t buf_size = 0;
+    FILE *pipe = NULL;
+
+    #if defined(__APPLE__)          // macOS
+        pipe = popen("pbpaste", "r");
+    #elif defined(__linux__)        // Linux or WSL
         FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
+        int is_wsl = 0;
         if (test_pipe) {
             char buf[128];
-            int is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
+            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
             pclose(test_pipe);
-            if (is_wsl) {       // WSL
-                pipe = popen("clip.exe", "w");
-            } else {            // Linux
-                pipe = popen("xclip -selection clipboard", "w");
-            }
-        } else {
-            pipe = popen("xclip -selection clipboard", "w");
         }
-    #else                       // Default fallback
-        FILE *pipe = popen("xclip -selection clipboard", "w");
+        if (is_wsl)                 // WSL
+            pipe = popen("powershell.exe Get-Clipboard", "r");
+        else                        // Linux
+            pipe = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    #else                           // Default Fallback
+        pipe = popen("xclip -selection clipboard -o", "r");
     #endif
 
-    if (pipe) {
-        fwrite(E.clipboard, 1, strlen(E.clipboard), pipe);
-        pclose(pipe);
-    } else {
-        editorSetStatusMsg("Cut %zu bytes (clipboard command failed)", strlen(E.clipboard));
+    if (!pipe) {
+        editorSetStatusMsg("Clipboard tool missing or inaccessible");
+        return;
     }
 
-    int y1 = E.select_sy, x1 = E.select_sx;
-    int y2 = E.select_ey, x2 = E.select_ex;
-    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
-        int tmpx = x1, tmpy = y1;
-        x1 = x2;
-        y1 = y2;
-        x2 = tmpx;
-        y2 = tmpy;
+    char chunk[256];
+    size_t len;
+    while ((len = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
+        clipboard_data = realloc(clipboard_data, buf_size + len + 1);
+        if (!clipboard_data)
+            die("realloc");
+
+        memcpy(clipboard_data + buf_size, chunk, len);
+        buf_size += len;
+    }
+    pclose(pipe);
+
+    if (!clipboard_data || buf_size == 0) {
+        free(clipboard_data);
+        editorSetStatusMsg("Clipboard is empty");
+        return;
     }
 
-    if (y1 == y2) {
-        memmove(&E.row[y1].chars[x1], &E.row[y1].chars[x2], E.row[y1].size - x2);
-        E.row[y1].size -= (x2 - x1);
-        E.row[y1].chars[E.row[y1].size] = '\0';
-        editorUpdateRow(&E.row[y1]);
-    } else {
-        E.row[y1].size = x1;
-        E.row[y1].chars[x1] = '\0';
-        editorUpdateRow(&E.row[y1]);
+    clipboard_data[buf_size] = '\0';
+    size_t j = 0;
+    for (size_t i = 0; i < buf_size; i++)
+        if (clipboard_data[i] != '\r')
+            clipboard_data[j++] = clipboard_data[i];
+    clipboard_data[j] = '\0';
 
-        memmove(E.row[y2].chars, &E.row[y2].chars[x2], E.row[y2].size - x2);
-        E.row[y2].size -= x2;
-        E.row[y2].chars[E.row[y2].size] = '\0';
-        editorUpdateRow(&E.row[y2]);
-
-        editorRowAppendString(&E.row[y1], E.row[y2].chars, E.row[y2].size);
-        editorDeleteRow(y2);
-
-        for (int r = y2 - 1; r > y1; r--)
-            editorDeleteRow(r);
+    if (E.select_mode) {
+        editorDeleteSelectedText();
     }
 
-    E.cursor_x = x1;
-    E.cursor_y = y1;
-    E.select_mode = 0;
-    E.dirty++;
-    editorSetStatusMsg("Cut %zu bytes", strlen(E.clipboard));
+    char *line_start = clipboard_data;
+    char *newline_pos;
+    while ((newline_pos = strchr(line_start, '\n')) != NULL) {
+        size_t chunk_len = newline_pos - line_start;
+        for (size_t i = 0; i < chunk_len; i++)
+            editorInsertChar(line_start[i]);
+        if (*(newline_pos + 1) != '\0')
+            editorInsertNewline();
+        line_start = newline_pos + 1;
+    }
+
+    while (*line_start) {
+        editorInsertChar(*line_start++);
+    }
+
+    editorSetStatusMsg("Pasted %zu bytes from system clipboard", buf_size);
+    free(clipboard_data);
 }
