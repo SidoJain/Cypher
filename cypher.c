@@ -390,6 +390,21 @@ void editorProcessKeypress() {
             editorPaste();
             break;
 
+        case CTRL_KEY('a'):     // select all
+            if (E.num_rows > 0) {
+                E.select_mode = 1;
+                E.select_sx = 0;
+                E.select_sy = 0;
+                E.select_ex = E.row[E.num_rows - 1].size;
+                E.select_ey = E.num_rows - 1;
+
+                E.cursor_x = E.select_ex;
+                E.cursor_y = E.select_ey;
+
+                editorSetStatusMsg("Selected all %d lines", E.num_rows);
+            }
+            break;
+
         case '\r':              // enter
             editorInsertNewline();
             break;
@@ -779,6 +794,7 @@ void editorHelpScreen() {
         "  Ctrl-S               - Save",
         "  Ctrl-Q               - Quit",
         "  Ctrl-F               - Find",
+        "  Ctrl-A               - Select All",
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
