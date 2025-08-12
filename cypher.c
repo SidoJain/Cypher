@@ -1,4 +1,4 @@
-/*** includes ***/
+/*** Includes ***/
 
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
@@ -17,7 +17,7 @@
 #include <stdarg.h>
 #include <fcntl.h>
 
-/*** defines ***/
+/*** Defines ***/
 
 #define CYPHER_VERSION "1.0.0"
 #define EMPTY_LINE_SYMBOL "~"
@@ -43,11 +43,11 @@
 #define QUERY_CURSOR_POSITION   "\x1b[6n"
 #define SHOW_CURSOR             "\x1b[?25h"
 #define HIDE_CURSOR             "\x1b[?25l"
-#define INVERTED_COLORS         "\x1b[7m"
 #define REMOVE_GRAPHICS         "\x1b[m"
+#define INVERTED_COLORS         "\x1b[7m"
 #define YELLOW_COLOR            "\x1b[33m"
 
-/*** structs and enums ***/
+/*** Structs and Enums ***/
 
 enum editorKey {
     BACKSPACE = 127,
@@ -121,11 +121,13 @@ typedef struct {
     int cursor_x;
     int cursor_y;
     int select_mode;
-    int select_sx, select_sy;
-    int select_ex, select_ey;
+    int select_sx;
+    int select_sy;
+    int select_ex;
+    int select_ey;
 } editorState;
 
-/*** data ***/
+/*** Global Data ***/
 
 editorConfig E;
 
@@ -134,9 +136,9 @@ int undo_top = -1;
 editorState redo_stack[UNDO_REDO_STACK_SIZE];
 int redo_top = -1;
 
-/*** declarations ***/
+/*** Function Prototypes ***/
 
-// Terminal
+// terminal
 void die(const char *);
 void enableRawMode();
 void disableRawMode();
@@ -144,7 +146,7 @@ int editorReadKey();
 int getWindowSize(int *, int *);
 int getCursorPosition(int *, int *);
 
-// Input
+// input
 void editorProcessKeypress();
 void editorMoveCursor(int);
 char *editorPrompt(char *, void (*)(char *, int));
@@ -153,7 +155,7 @@ void editorMoveWordRight();
 void editorScrollPageUp();
 void editorScrollPageDown();
 
-// Output
+// output
 void editorDrawWelcomeMessage(appendBuffer *);
 void editorRefreshScreen();
 void editorDrawRows(appendBuffer *);
@@ -163,20 +165,20 @@ void editorSetStatusMsg(const char *, ...);
 void editorDrawMsgBar(appendBuffer *);
 void editorHelpScreen();
 
-// Editor
+// editor
 void editorInit();
 void editorCleanup();
 
-// Append Buffer
+// append buffer
 void abAppend(appendBuffer *, const char *, int);
 void abFree(appendBuffer *);
 
-// File I/O
+// file i/o
 void editorOpen(char *);
 char *editorRowsToString(int *);
 void editorSave();
 
-// Row Operations
+// row operations
 void editorInsertRow(int, char *, size_t);
 void editorUpdateRow(editorRow *);
 int editorRowCxToRx(editorRow *, int);
@@ -187,35 +189,35 @@ void editorFreeRow(editorRow *);
 void editorDeleteRow(int);
 void editorRowAppendString(editorRow *, char *, size_t);
 
-// Editor Operations
+// editor operations
 void editorInsertChar(int);
 void editorDeleteChar();
 void editorInsertNewline();
 void editorDeleteSelectedText();
 
-// Find Operations
+// find operations
 void editorFind();
 void editorFindCallback(char *, int);
 
-// Clipboard Operations
+// clipboard operations
 void clipboardCopyToSystem(const char *);
 char *editorGetSelectedText();
 void editorCopySelection();
 void editorCutSelection();
 void editorPaste();
 
-// Jump Operations
+// jump operations
 void editorJump();
 void editorJumpCallback(char *, int);
 
-// Undo-Redo Operations
+// undo-redo operations
 void freeEditorState(editorState *);
 void saveEditorStateForUndo();
 void restoreEditorState(editorState *);
 void editorUndo();
 void editorRedo();
 
-/*** main ***/
+/*** Main ***/
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -233,7 +235,7 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-/*** definitions ***/
+/*** Function Definitions ***/
 
 void die(const char *str) {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
