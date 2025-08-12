@@ -186,6 +186,9 @@ void editorCopySelection();
 void editorCutSelection();
 void editorPaste();
 
+// Jump Operations
+void editorJump();
+
 /*** main ***/
 
 int main(int argc, char *argv[]) {
@@ -403,6 +406,12 @@ void editorProcessKeypress() {
 
                 editorSetStatusMsg("Selected all %d lines", E.num_rows);
             }
+            break;
+
+        case CTRL_KEY('_'):     // jump to
+        case CTRL_KEY('g'):
+        case CTRL_KEY('l'):
+            editorJump();
             break;
 
         case '\r':              // enter
@@ -788,13 +797,14 @@ void editorHelpScreen() {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR) - 1);
 
     char *help_text[] = {
-        "CYPHER Editor Help",
+        "CYPHER Editor Help Page",
         "",
         "Keyboard Shortcuts:",
         "  Ctrl-S               - Save",
         "  Ctrl-Q               - Quit",
         "  Ctrl-F               - Find",
-        "  Ctrl-A               - Select All",
+        "  Ctrl-G / L / _       - Jump to line",
+        "  Ctrl-A               - Select all",
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
@@ -1461,4 +1471,37 @@ void editorPaste() {
 
     editorSetStatusMsg("Pasted %zu bytes from system clipboard", buf_size);
     free(clipboard_data);
+}
+
+void editorJump() {
+    char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", NULL);
+    if (input == NULL) {
+        editorSetStatusMsg("Jump cancelled");
+        return;
+    }
+
+    int row = 0, col = 1;
+    if (sscanf(input, "%d:%d", &row, &col) != 2) {
+        if (sscanf(input, "%d", &row) != 1) {
+            editorSetStatusMsg("Invalid format. Use `row:col` or `row`.");
+            free(input);
+            return;
+        }
+    }
+    free(input);
+
+    row -= 1;
+    col -= 1;
+    if (row < 0) row = 0;
+    if (row >= E.num_rows) row = E.num_rows - 1;
+    if (col < 0) col = 0;
+    if (row >= 0 && row < E.num_rows)
+        if (col > E.row[row].size)
+            col = E.row[row].size;
+
+    E.cursor_y = row;
+    E.cursor_x = col;
+
+    editorScroll();
+    editorSetStatusMsg("Jumped to %d:%d", row + 1, col + 1);
 }

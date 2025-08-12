@@ -15,12 +15,14 @@ This README file has been completely written in Cypher.
   - Home/End keys to jump to start/end of a line.
   - Page Up/Page Down for fast scrolling.
   - `Ctrl-ArrowKeys` for fast navigation.
+  - `Ctrl-G` to jump to a specific line.
 
 - **Editing Operations**
   - Insert text anywhere.
   - Backspace/Delete characters.
-  - Insert new lines (`Enter` key).
+  - Insert new lines (`Enter`).
   - Automatic tab expansion to spaces.
+  - Paste command (`Ctrl-V`) from clipboard.
 
 - **Search**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
@@ -41,6 +43,7 @@ This README file has been completely written in Cypher.
 | `Ctrl-C`                              | Copy selected text |
 | `Ctrl-X`                              | Cut selected text |
 | `Ctrl-V`                              | Paste from clipboard |
+| `Ctrl-G / L / _`                      | Jump to line |
 | `Arrow Keys`                          | Move cursor |
 | `Home / End`                          | Move to start / end of line |
 | `Page Up`                             | Scroll up by one screen |
@@ -51,7 +54,6 @@ This README file has been completely written in Cypher.
 | `Shift + Arrow Keys / Home / End`     | Select text |
 | `Ctrl + Left / Right`                 | Skip words |
 | `Ctrl + Up / Down`                    | Scroll up / down |
-| `Ctrl + Shift + Left / Right`         | Combine Ctrl and Shift  |
 
 ## Installation & Compilation
 
