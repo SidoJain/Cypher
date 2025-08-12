@@ -43,6 +43,7 @@
 #define HIDE_CURSOR             "\x1b[?25l"
 #define INVERTED_COLORS         "\x1b[7m"
 #define REMOVE_GRAPHICS         "\x1b[m"
+#define YELLOW_COLOR            "\x1b[33m"
 
 /*** structs and enums ***/
 
@@ -99,6 +100,12 @@ typedef struct {
     int select_sx, select_sy;
     int select_ex, select_ey;
     char *clipboard;
+    char *find_query;
+    int *find_match_lines;
+    int *find_match_cols;
+    int find_num_matches;
+    int find_current_idx;
+    int find_active;
 } editorConfig;
 
 typedef struct {
@@ -650,7 +657,7 @@ void editorDrawRows(appendBuffer *ab) {
 
             for (int j = 0; j < len; j++) {
                 int cx = editorRowRxToCx(&E.row[file_row], j + E.col_offset);
-                int sel = 0;
+                int is_sel = 0;
                 if (E.select_mode) {
                     int y1 = E.select_sy, x1 = E.select_sx;
                     int y2 = E.select_ey, x2 = E.select_ex;
@@ -661,14 +668,35 @@ void editorDrawRows(appendBuffer *ab) {
                         y2 = tmpy;
                         x2 = tmpx;
                     }
-                    if (file_row > y1 && file_row < y2) sel = 1;
-                    else if (file_row == y1 && file_row == y2 && cx >= x1 && cx < x2) sel = 1;
-                    else if (file_row == y1 && file_row != y2 && cx >= x1) sel = 1;
-                    else if (file_row == y2 && file_row != y1 && cx < x2) sel = 1;
+                    if (file_row > y1 && file_row < y2) is_sel = 1;
+                    else if (file_row == y1 && file_row == y2 && cx >= x1 && cx < x2) is_sel = 1;
+                    else if (file_row == y1 && file_row != y2 && cx >= x1) is_sel = 1;
+                    else if (file_row == y2 && file_row != y1 && cx < x2) is_sel = 1;
                 }
-                if (sel) abAppend(ab, INVERTED_COLORS, 4);
+
+                int is_find = 0;
+                int is_current_match = 0;
+                if (E.find_active && !E.select_mode && E.find_query) {
+                    int match_len = strlen(E.find_query);
+                    for (int m = 0; m < E.find_num_matches; m++) {
+                        if (E.find_match_lines[m] == file_row) {
+                            int col_start = E.find_match_cols[m];
+                            int col_end = col_start + match_len;
+                            if (j + E.col_offset >= col_start && j + E.col_offset < col_end) {
+                                is_find = 1;
+                                if (m == E.find_current_idx)
+                                    is_current_match = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (is_sel) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
+                else if (is_current_match) abAppend(ab, YELLOW_COLOR, sizeof(YELLOW_COLOR) - 1);
+                else if (is_find) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
                 abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
-                if (sel) abAppend(ab, REMOVE_GRAPHICS, 3);
+                if (is_sel || is_find || is_current_match) abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
             }
         }
         abAppend(ab, CLEAR_LINE NEW_LINE, sizeof(CLEAR_LINE NEW_LINE) - 1);
@@ -691,7 +719,7 @@ void editorScroll() {
 }
 
 void editorDrawStatusBar(appendBuffer *ab) {
-    abAppend(ab, INVERTED_COLORS, 4);
+    abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
     char status[80], rstatus[80];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.filename ? E.filename : "[No Name]", E.num_rows, E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor_y + 1, E.cursor_x + 1);
@@ -720,12 +748,25 @@ void editorSetStatusMsg(const char *fmt, ...) {
 }
 
 void editorDrawMsgBar(appendBuffer *ab) {
-    abAppend(ab, CLEAR_LINE, 3);
+    abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE));
+
     int msg_len = strlen(E.status_msg);
     if (msg_len > E.screen_cols)
         msg_len = E.screen_cols;
     if (msg_len && time(NULL) - E.status_msg_time < 5)
         abAppend(ab, E.status_msg, msg_len);
+
+    if (E.find_active) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), " %d/%d", E.find_current_idx + 1, E.find_num_matches);
+        int right_len = strlen(buf);
+
+        while (msg_len + right_len < E.screen_cols) {
+            abAppend(ab, " ", 1);
+            msg_len++;
+        }
+        abAppend(ab, buf, right_len);
+    }
 }
 
 void editorHelpScreen() {
@@ -771,6 +812,17 @@ void initEditor() {
     E.status_msg[0] = '\0';
     E.status_msg_time = 0;
     E.clipboard = NULL;
+    E.select_mode = 0;
+    E.select_sx = 0;
+    E.select_sy = 0;
+    E.select_ex = 0;
+    E.select_ey = 0;
+    E.find_query = NULL;
+    E.find_match_lines = NULL;
+    E.find_match_cols = NULL;
+    E.find_num_matches = 0;
+    E.find_current_idx = -1;
+    E.find_active = 0;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -788,6 +840,16 @@ void editorCleanup() {
 
     free(E.clipboard);
     E.clipboard = NULL;
+
+    free(E.find_query);
+    free(E.find_match_lines);
+    free(E.find_match_cols);
+    E.find_query = NULL;
+    E.find_match_lines = NULL;
+    E.find_match_cols = NULL;
+    E.find_num_matches = 0;
+    E.find_current_idx = -1;
+    E.find_active = 0;
 }
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
@@ -1107,45 +1169,100 @@ void editorFind() {
         E.cursor_y = saved_cursor_y;
         E.col_offset = saved_col_offset;
         E.row_offset = saved_row_offset;
+        E.find_active = 0;
     }
 }
 
 void editorFindCallback(char *query, int key) {
-    static int last_match = -1;
-    static int direction = 1;
+    int direction = 1;
 
-    if (key == '\r' || key == ESCAPE_CHAR) {
-        last_match = -1;
-        direction = 1;
+    if (key == '\r' || key == ESCAPE_CHAR || query[0] == '\0') {
+        E.find_active = 0;
+        free(E.find_query);
+        E.find_query = NULL;
+        free(E.find_match_lines);
+        E.find_match_lines = NULL;
+        free(E.find_match_cols);
+        E.find_match_cols = NULL;
+        E.find_num_matches = 0;
+        E.find_current_idx = -1;
         return;
     }
-    else if (key == ARROW_RIGHT || key == ARROW_DOWN)
-        direction = 1;
-    else if (key == ARROW_LEFT || key == ARROW_UP)
-        direction = -1;
-    else {
-        last_match = -1;
-        direction = 1;
-    }
 
-    if (last_match == -1)
-        direction = 1;
-    int current = last_match;
-    for (int i = 0; i < E.num_rows; i++) {
-        current += direction;
-        if (current == -1)
-            current = E.num_rows - 1;
-        else if (current == E.num_rows)
-            current = 0;
+    if (key == ARROW_RIGHT || key == ARROW_DOWN) direction = 1;
+    else if (key == ARROW_LEFT || key == ARROW_UP) direction = -1;
+    else if (key == BACKSPACE) direction = 1;
+    else if (iscntrl(key)) return;
+    else direction = 1;
 
-        editorRow *row = &E.row[current];
-        char *match = strstr(row->render, query);
-        if (match) {
-            last_match = current;
-            E.cursor_y = current;
-            E.cursor_x = editorRowRxToCx(row, match - row->render);
+    if (E.find_query == NULL || strcmp(E.find_query, query) != 0) {
+        free(E.find_query);
+        E.find_query = strdup(query);
+        if (!E.find_query)
+            die("strdup");
+
+        free(E.find_match_lines);
+        free(E.find_match_cols);
+        E.find_match_lines = NULL;
+        E.find_match_cols = NULL;
+        E.find_num_matches = 0;
+        E.find_current_idx = -1;
+
+        for (int i = 0; i < E.num_rows; i++) {
+            char *line = E.row[i].render;
+            char *p = line;
+            while ((p = strstr(p, query)) != NULL) {
+                E.find_match_lines = realloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
+                E.find_match_cols = realloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
+                if (!E.find_match_lines || !E.find_match_cols)
+                    die("realloc");
+
+                E.find_match_lines[E.find_num_matches] = i;
+                E.find_match_cols[E.find_num_matches] = p - line;
+                E.find_num_matches++;
+
+                p += strlen(query);
+            }
+        }
+
+        if (E.find_num_matches > 0) {
+            E.find_current_idx = 0;
+            int row = E.find_match_lines[0];
+            int col = E.find_match_cols[0];
+            E.cursor_y = row;
+            E.cursor_x = editorRowRxToCx(&E.row[row], col);
             E.row_offset = E.num_rows;
-            break;
+
+            int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
+            if (render_pos >= E.col_offset + E.screen_cols - 1) {
+                int margin = strlen(query) + 3;
+                if (render_pos > margin) {
+                    E.col_offset = render_pos - (E.screen_cols - margin);
+                    if (E.col_offset < 0) E.col_offset = 0;
+                }
+            }
+        }
+        E.find_active = 1;
+    } else {
+        if (E.find_num_matches > 0) {
+            E.find_current_idx += direction;
+            if (E.find_current_idx < 0) E.find_current_idx = E.find_num_matches - 1;
+            else if (E.find_current_idx >= E.find_num_matches) E.find_current_idx = 0;
+
+            int row = E.find_match_lines[E.find_current_idx];
+            int col = E.find_match_cols[E.find_current_idx];
+            E.cursor_y = row;
+            E.cursor_x = editorRowRxToCx(&E.row[row], col);
+            E.row_offset = E.num_rows;
+
+            int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
+            if (render_pos >= E.col_offset + E.screen_cols - 1) {
+                int margin = strlen(query) + 3;
+                if (render_pos > margin) {
+                    E.col_offset = render_pos - (E.screen_cols - margin);
+                    if (E.col_offset < 0) E.col_offset = 0;
+                }
+            }
         }
     }
 }
