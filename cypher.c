@@ -20,6 +20,7 @@
 /*** defines ***/
 
 #define CYPHER_VERSION "1.0.0"
+#define EMPTY_LINE_SYMBOL "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
 #define APPEND_BUFFER_INIT  {NULL, 0}
@@ -153,6 +154,7 @@ void editorScrollPageUp();
 void editorScrollPageDown();
 
 // Output
+void editorDrawWelcomeMessage(appendBuffer *);
 void editorRefreshScreen();
 void editorDrawRows(appendBuffer *);
 void editorScroll();
@@ -310,7 +312,7 @@ int editorReadKey() {
                             case 'D': return SHIFT_ARROW_LEFT;
                         }
                     }
-                } else if (seq[2] == '~') {
+                } else if (seq[2] == EMPTY_LINE_SYMBOL[0]) {
                     switch (seq[1]) {
                         case '1': return HOME_KEY;
                         case '3': return DEL_KEY;
@@ -684,6 +686,27 @@ void editorScrollPageDown() {
     }
 }
 
+void editorDrawWelcomeMessage(appendBuffer *ab) {
+    char welcome[80];
+    int welcome_len = snprintf(welcome, sizeof(welcome), "Cypher Version %s", CYPHER_VERSION);
+    if (welcome_len > E.screen_cols) welcome_len = E.screen_cols;
+
+    int padding = (E.screen_cols - welcome_len) / 2;
+    int vertical_center = E.screen_rows / 3;
+
+    for (int y = 0; y < E.screen_rows; y++) {
+        if (y == vertical_center) {
+            abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
+            for (int i = 1; i < padding; i++)
+                abAppend(ab, " ", 1);
+            abAppend(ab, welcome, welcome_len);
+        }
+        else
+            abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
+        abAppend(ab, CLEAR_LINE NEW_LINE, sizeof(CLEAR_LINE NEW_LINE) - 1);
+    }
+}
+
 void editorRefreshScreen() {
     editorScroll();
 
@@ -704,10 +727,15 @@ void editorRefreshScreen() {
 }
 
 void editorDrawRows(appendBuffer *ab) {
+    if (E.num_rows == 0) {
+        editorDrawWelcomeMessage(ab);
+        return;
+    }
+
     for (int y = 0; y < E.screen_rows; y++) {
         int file_row = y + E.row_offset;
         if (file_row >= E.num_rows) {
-            abAppend(ab, "~", 1);
+            abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
         } else {
             int len = E.row[file_row].rsize - E.col_offset;
             if (len < 0) len = 0;
