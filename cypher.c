@@ -486,12 +486,10 @@ void editorProcessKeypress() {
             break;
 
         case PAGE_UP:
+            editorScrollPageUp(E.screen_rows);
+            break;
         case PAGE_DOWN:
-            {
-                int row_count = E.screen_rows;
-                while (row_count--)
-                    editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
-            }
+            editorScrollPageDown(E.screen_rows);
             break;
 
         case CTRL_ARROW_LEFT:
@@ -679,6 +677,9 @@ void editorMoveWordRight() {
 
 void editorScrollPageUp(int scroll_amount) {
     if (E.row_offset > 0) {
+        if (scroll_amount > E.row_offset)
+            scroll_amount = E.row_offset;
+
         E.row_offset -= scroll_amount;
         E.cursor_y -= scroll_amount;
 
