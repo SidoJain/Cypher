@@ -1,8 +1,8 @@
 # Cypher - Terminal Text Editor
 
-Cypher is a lightweight terminal-based text editor written in C.
-It runs in the terminal in **raw mode**.
-This README file has been completely written in Cypher.
+Cypher is a lightweight terminal-based text editor written in C.  
+It runs in the terminal in **raw mode**.  
+This README file has been completely written in Cypher.  
 
 ## Features
 
@@ -85,6 +85,37 @@ make run FILE={filename}
 
 ```bash
 make clean
+```
+
+## Usage
+
+Clone this repo.
+
+```bash
+git clone https://github.com/SidoJain/Cypher.git
+cd Cypher
+```
+
+Make the executable file.
+
+```bash
+make
+```
+
+In ~/.bashrc
+
+```bash
+# set user friendly alias
+alias cypher='cypher.exe'
+
+# add executable file directory to PATH
+export PATH="<directory_path>:$PATH"
+```
+
+Use cypher to view/edit any file.
+
+```bash
+cypher file.txt
 ```
 
 ## License
