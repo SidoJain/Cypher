@@ -140,6 +140,9 @@ int redo_top = -1;
 
 /*** Function Prototypes ***/
 
+// utility
+int is_word_char(int);
+
 // terminal
 void die(const char *);
 void enableRawMode();
@@ -154,8 +157,8 @@ void editorMoveCursor(int);
 char *editorPrompt(char *, void (*)(char *, int));
 void editorMoveWordLeft();
 void editorMoveWordRight();
-void editorScrollPageUp();
-void editorScrollPageDown();
+void editorScrollPageUp(int);
+void editorScrollPageDown(int);
 
 // output
 void editorDrawWelcomeMessage(appendBuffer *);
@@ -238,6 +241,10 @@ int main(int argc, char *argv[]) {
 }
 
 /*** Function Definitions ***/
+
+int is_word_char(int c) {
+    return isalnum(c) || c == '_';
+}
 
 void die(const char *str) {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
@@ -494,10 +501,10 @@ void editorProcessKeypress() {
             editorMoveWordRight();
             break;
         case CTRL_ARROW_UP:
-            editorScrollPageUp();
+            editorScrollPageUp(1);
             break;
         case CTRL_ARROW_DOWN:
-            editorScrollPageDown();
+            editorScrollPageDown(1);
             break;
 
         case SHIFT_ARROW_LEFT:
@@ -654,9 +661,9 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
 void editorMoveWordLeft() {
     if (E.cursor_y >= E.num_rows) return;
 
-    while (E.cursor_x > 0 && isspace(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+    while (E.cursor_x > 0 && !is_word_char(E.row[E.cursor_y].chars[E.cursor_x - 1]))
         E.cursor_x--;
-    while (E.cursor_x > 0 && !isspace(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+    while (E.cursor_x > 0 && is_word_char(E.row[E.cursor_y].chars[E.cursor_x - 1]))
         E.cursor_x--;
 }
 
@@ -664,29 +671,41 @@ void editorMoveWordRight() {
     if (E.cursor_y >= E.num_rows) return;
 
     int len = E.row[E.cursor_y].size;
-    while (E.cursor_x < len && !isspace(E.row[E.cursor_y].chars[E.cursor_x]))
+    while (E.cursor_x < len && !is_word_char(E.row[E.cursor_y].chars[E.cursor_x]))
         E.cursor_x++;
-    while (E.cursor_x < len && isspace(E.row[E.cursor_y].chars[E.cursor_x]))
+    while (E.cursor_x < len && is_word_char(E.row[E.cursor_y].chars[E.cursor_x]))
         E.cursor_x++;
 }
 
-void editorScrollPageUp() {
+void editorScrollPageUp(int scroll_amount) {
     if (E.row_offset > 0) {
-        int scroll_amount = 1;
         E.row_offset -= scroll_amount;
         E.cursor_y -= scroll_amount;
+
         if (E.cursor_y < 0)
             E.cursor_y = 0;
+
+        if (E.cursor_y < E.num_rows) {
+            int row_len = E.row[E.cursor_y].size;
+            if (E.cursor_x > row_len)
+                E.cursor_x = row_len;
+        }
     }
 }
 
-void editorScrollPageDown() {
+void editorScrollPageDown(int scroll_amount) {
     if (E.row_offset < E.num_rows - E.screen_rows) {
-        int scroll_amount = 1;
         E.row_offset += scroll_amount;
         E.cursor_y += scroll_amount;
+
         if (E.cursor_y >= E.num_rows)
             E.cursor_y = E.num_rows - 1;
+        
+        if (E.cursor_y < E.num_rows) {
+            int row_len = E.row[E.cursor_y].size;
+            if (E.cursor_x > row_len)
+                E.cursor_x = row_len;
+        }
     }
 }
 
