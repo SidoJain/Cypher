@@ -173,7 +173,7 @@ void editorScroll();
 void editorDrawStatusBar(appendBuffer *);
 void editorSetStatusMsg(const char *, ...);
 void editorDrawMsgBar(appendBuffer *);
-void editorHelpScreen();
+void editorManualScreen();
 
 // editor
 void editorInit();
@@ -416,15 +416,15 @@ void editorProcessKeypress() {
             write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
             exit(0);
             break;
-        
-        case CTRL_KEY('h'):     // help
-            editorHelpScreen();
+
+        case CTRL_KEY('u'):     // manual
+            editorManualScreen();
             break;
 
         case CTRL_KEY('s'):     // save
             editorSave();
             break;
-        
+
         case CTRL_KEY('f'):     // find
             editorFind();
             break;
@@ -436,7 +436,7 @@ void editorProcessKeypress() {
         case CTRL_KEY('x'):     // cut
             editorCutSelection();
             break;
-        
+
         case CTRL_KEY('v'):     // paste
             editorPaste();
             break;
@@ -892,11 +892,11 @@ void editorDrawMsgBar(appendBuffer *ab) {
     }
 }
 
-void editorHelpScreen() {
+void editorManualScreen() {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET HIDE_CURSOR) - 1);
 
-    char *help_text[] = {
-        "CYPHER Editor Help Page",
+    char *text[] = {
+        "CYPHER Editor Manual",
         "",
         "Keyboard Shortcuts:",
         "  Ctrl-S               - Save",
@@ -909,16 +909,16 @@ void editorHelpScreen() {
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
-        "  Ctrl-H               - Show help page",
+        "  Ctrl-U               - Show manual",
         "",
         "Press any key to return..."
     };
 
-    int lines = sizeof(help_text) / sizeof(help_text[0]);
+    int lines = sizeof(text) / sizeof(text[0]);
     int row = 1;
     for (int i = 0; i < lines; i++) {
         char buf[128];
-        int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H%s", row++, help_text[i]);
+        int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H%s", row++, text[i]);
         write(STDOUT_FILENO, buf, len);
     }
 

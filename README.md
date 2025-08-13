@@ -40,7 +40,7 @@ This README file has been completely written in Cypher.
 | `Ctrl-S`                              | Save current file |
 | `Ctrl-F`                              | Search in file |
 | `Ctrl-A`                              | Select all |
-| `Ctrl-H`                              | Open help page |
+| `Ctrl-U`                              | Open keybinds manual |
 | `Ctrl-C`                              | Copy selected text |
 | `Ctrl-X`                              | Cut selected text |
 | `Ctrl-V`                              | Paste from clipboard |
