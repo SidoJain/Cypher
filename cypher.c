@@ -32,6 +32,7 @@
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
 #define UNDO_REDO_STACK_SIZE    100
+#define UNDO_TIMEOUT            1000
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -138,10 +139,14 @@ int undo_top = -1;
 editorState redo_stack[UNDO_REDO_STACK_SIZE];
 int redo_top = -1;
 
+static long last_edit_time = 0;
+static int undo_in_progress = 0;
+
 /*** Function Prototypes ***/
 
 // utility
 int is_word_char(int);
+long current_millis();
 
 // terminal
 void die(const char *);
@@ -244,6 +249,12 @@ int main(int argc, char *argv[]) {
 
 int is_word_char(int c) {
     return isalnum(c) || c == '_';
+}
+
+long current_millis() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 void die(const char *str) {
@@ -460,10 +471,12 @@ void editorProcessKeypress() {
             break;
 
         case '\r':              // enter
+            saveEditorStateForUndo();
             editorInsertNewline();
             break;
 
         case '\t':              // tab
+            saveEditorStateForUndo();
             for (int i = 0; i < 4; i++)
                 editorInsertChar(' ');
             break;
@@ -478,10 +491,7 @@ void editorProcessKeypress() {
 
         case BACKSPACE:
         case DEL_KEY:
-            if (c == DEL_KEY && !E.select_mode)
-                editorMoveCursor(ARROW_RIGHT);
-            if (E.select_mode)
-                saveEditorStateForUndo();
+            saveEditorStateForUndo();
             editorDeleteChar();
             break;
 
@@ -569,13 +579,16 @@ void editorProcessKeypress() {
         case ARROW_RIGHT:
         case ARROW_UP:
         case ARROW_DOWN:
+            undo_in_progress = 0;
             E.select_mode = 0;
             editorMoveCursor(c);
             break;
 
         default:
-            if (!iscntrl(c))
+            if (!iscntrl(c)) {
+                saveEditorStateForUndo();
                 editorInsertChar(c);
+            }
             break;
     }
 
@@ -1614,24 +1627,33 @@ void freeEditorState(editorState *state) {
 }
 
 void saveEditorStateForUndo() {
+    long now = current_millis();
+
     if (undo_top >= UNDO_REDO_STACK_SIZE - 1)
         return;
 
-    for (int i = 0; i <= redo_top; i++)
-        freeEditorState(&redo_stack[i]);
-    redo_top = -1;
+    if (!undo_in_progress || (now - last_edit_time > UNDO_TIMEOUT)) {
+        for (int i = 0; i <= redo_top; i++)
+            freeEditorState(&redo_stack[i]);
+        redo_top = -1;
 
-    undo_top++;
-    editorState *state = &undo_stack[undo_top];
+        undo_top++;
+        editorState *state = &undo_stack[undo_top];
+        freeEditorState(state);
 
-    state->buffer = editorRowsToString(&state->buf_len);
-    state->cursor_x = E.cursor_x;
-    state->cursor_y = E.cursor_y;
-    state->select_mode = E.select_mode;
-    state->select_sx = E.select_sx;
-    state->select_sy = E.select_sy;
-    state->select_ex = E.select_ex;
-    state->select_ey = E.select_ey;
+        state->buffer = editorRowsToString(&state->buf_len);
+        state->cursor_x = E.cursor_x;
+        state->cursor_y = E.cursor_y;
+        state->select_mode = E.select_mode;
+        state->select_sx = E.select_sx;
+        state->select_sy = E.select_sy;
+        state->select_ex = E.select_ex;
+        state->select_ey = E.select_ey;
+
+        undo_in_progress = 1;
+    }
+
+    last_edit_time = now;
 }
 
 void restoreEditorState(editorState *state) {
