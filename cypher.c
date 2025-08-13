@@ -637,7 +637,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
         editorRefreshScreen();
 
         int c = editorReadKey();
-        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+        if (c == DEL_KEY || c == BACKSPACE) {
             if (buf_len != 0)
                 buf[--buf_len] = '\0';
         } else if (c == ESCAPE_CHAR) {
