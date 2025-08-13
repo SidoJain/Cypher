@@ -417,7 +417,7 @@ void editorProcessKeypress() {
             exit(0);
             break;
 
-        case CTRL_KEY('u'):     // manual
+        case CTRL_KEY('h'):     // manual
             editorManualScreen();
             break;
 
@@ -909,7 +909,7 @@ void editorManualScreen() {
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
-        "  Ctrl-U               - Show manual",
+        "  Ctrl-H               - Show manual",
         "",
         "Press any key to return..."
     };
