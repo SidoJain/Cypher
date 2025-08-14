@@ -31,6 +31,7 @@
 
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
+#define SAVE_TIMES              2
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT            1000
 
@@ -414,7 +415,7 @@ void editorProcessKeypress() {
     switch (c) {
         case CTRL_KEY('q'):     // quit
             if (E.dirty && quit_times > 0) {
-                editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more times to quit.", quit_times);
+                editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", quit_times, quit_times == 1 ? "" : "s");
                 quit_times--;
                 return;
             }
@@ -1023,8 +1024,11 @@ void editorOpen(char *filename) {
 
 char *editorRowsToString(int *buf_len) {
     int total_len = 0;
-    for (int i = 0; i < E.num_rows; i++)
-        total_len += E.row[i].size + 1;
+    for (int i = 0; i < E.num_rows; i++) {
+        total_len += E.row[i].size;
+        if (i < E.num_rows - 1 || E.row[i].size > 0)
+            total_len += 1;
+    }
     *buf_len = total_len;
 
     char *buf = malloc(total_len);
@@ -1035,21 +1039,48 @@ char *editorRowsToString(int *buf_len) {
     for (int i = 0; i < E.num_rows; i++) {
         memcpy(ptr, E.row[i].chars, E.row[i].size);
         ptr += E.row[i].size;
-        *ptr = '\n';
-        ptr++;
+        if (i < E.num_rows - 1 || E.row[i].size > 0) {
+            *ptr = '\n';
+            ptr++;
+        }
     }
 
     return buf;
 }
 
 void editorSave() {
+    static int save_times = SAVE_TIMES;
+    static int new_file = 0;
+
     if (E.filename == NULL) {
-        E.filename = editorPrompt("Save as: %s (ESC to cancel)", NULL);
-        if (E.filename == NULL) {
+        char* input = editorPrompt("Save as: %s (ESC to cancel)", NULL);
+        if (input == NULL) {
             editorSetStatusMsg("Save aborted");
             return;
         }
+
+        if (strchr(input, '.') == NULL) {
+            size_t len = strlen(input);
+            char *new_name = malloc(len + 5);
+            if (!new_name)
+                die("malloc");
+
+            strcpy(new_name, input);
+            strcat(new_name, ".txt");
+            free(input);
+            input = new_name;
+        }
+        E.filename = input;
+        new_file = 1;
     }
+
+    if (new_file && access(E.filename, F_OK) == 0 && save_times != 0) {
+        editorSetStatusMsg("File exists! Press Ctrl-S %d more time%s to overwrite.", save_times, save_times == 1 ? "" : "s");
+        save_times--;
+        return;
+    }
+    save_times = SAVE_TIMES;
+    new_file = 0;
 
     int len;
     char *buf = editorRowsToString(&len);
