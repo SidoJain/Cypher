@@ -265,7 +265,6 @@ long current_millis() {
 
 void die(const char *str) {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
-    atexit(editorCleanup);
 
     perror(str);
     exit(1);
@@ -478,6 +477,7 @@ void editorProcessKeypress() {
 
         case '\r':              // enter
             saveEditorStateForUndo();
+            editorDeleteSelectedText();
             editorInsertNewline();
             break;
 
