@@ -89,6 +89,7 @@ typedef struct {
     int cursor_x;
     int cursor_y;
     int render_x;
+    int preferred_x;
     int screen_rows;
     int screen_cols;
     int row_offset;
@@ -123,6 +124,7 @@ typedef struct {
     char *buffer;
     int buf_len;
     int cursor_x;
+    int preferred_x;
     int cursor_y;
     int select_mode;
     int select_sx;
@@ -490,10 +492,13 @@ void editorProcessKeypress() {
 
         case HOME_KEY:
             E.cursor_x = 0;
+            E.preferred_x = E.cursor_x;
             break;
         case END_KEY:
-            if (E.cursor_y < E.num_rows)
+            if (E.cursor_y < E.num_rows) {
                 E.cursor_x = E.row[E.cursor_y].size;
+                E.preferred_x = E.cursor_x;
+            }
             break;
 
         case BACKSPACE:
@@ -607,20 +612,38 @@ void editorMoveCursor(int key) {
 
     switch (key) {
         case ARROW_LEFT:
-            if (E.cursor_x != 0)
+            if (E.cursor_x != 0) {
                 E.cursor_x--;
+            } else if (E.cursor_y > 0) {
+                E.cursor_y--;
+                E.cursor_x = E.row[E.cursor_y].size;
+            }
+            E.preferred_x = E.cursor_x;
             break;
         case ARROW_RIGHT:
-            if (row && E.cursor_x < row->size)
+            if (row && E.cursor_x < row->size) {
                 E.cursor_x++;
+            } else if (row && E.cursor_x == row->size && E.cursor_y < E.num_rows - 1) {
+                E.cursor_y++;
+                E.cursor_x = 0;
+            }
+            E.preferred_x = E.cursor_x;
             break;
         case ARROW_DOWN:
-            if (E.cursor_y < E.num_rows)
+            if (E.cursor_y < E.num_rows - 1) {
                 E.cursor_y++;
+                row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
+                if (E.preferred_x < 0) E.preferred_x = E.cursor_x;
+                E.cursor_x = row && row->size > E.preferred_x ? E.preferred_x : (row ? row->size : 0);
+            }
             break;
         case ARROW_UP:
-            if (E.cursor_y != 0)
+            if (E.cursor_y > 0) {
                 E.cursor_y--;
+                row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
+                if (E.preferred_x < 0) E.preferred_x = E.cursor_x;
+                E.cursor_x = row && row->size > E.preferred_x ? E.preferred_x : (row ? row->size : 0);
+            }
             break;
     }
 
@@ -683,6 +706,7 @@ void editorMoveWordLeft() {
         E.cursor_x--;
     while (E.cursor_x > 0 && is_word_char(E.row[E.cursor_y].chars[E.cursor_x - 1]))
         E.cursor_x--;
+    E.preferred_x = E.cursor_x;
 }
 
 void editorMoveWordRight() {
@@ -693,6 +717,7 @@ void editorMoveWordRight() {
         E.cursor_x++;
     while (E.cursor_x < len && is_word_char(E.row[E.cursor_y].chars[E.cursor_x]))
         E.cursor_x++;
+    E.preferred_x = E.cursor_x;
 }
 
 void editorScrollPageUp(int scroll_amount) {
@@ -708,8 +733,10 @@ void editorScrollPageUp(int scroll_amount) {
 
         if (E.cursor_y < E.num_rows) {
             int row_len = E.row[E.cursor_y].size;
-            if (E.cursor_x > row_len)
+            if (E.preferred_x > row_len)
                 E.cursor_x = row_len;
+            else
+                E.cursor_x = E.preferred_x;
         }
     }
 }
@@ -724,8 +751,10 @@ void editorScrollPageDown(int scroll_amount) {
         
         if (E.cursor_y < E.num_rows) {
             int row_len = E.row[E.cursor_y].size;
-            if (E.cursor_x > row_len)
+            if (E.preferred_x > row_len)
                 E.cursor_x = row_len;
+            else
+                E.cursor_x = E.preferred_x;
         }
     }
 }
@@ -937,6 +966,7 @@ void editorInit() {
     E.cursor_x = 0;
     E.cursor_y = 0;
     E.render_x = 0;
+    E.preferred_x = 0;
     E.row_offset = 0;
     E.col_offset = 0;
     E.num_rows = 0;
@@ -1247,6 +1277,7 @@ void editorInsertChar(int c) {
         editorInsertRow(E.num_rows, "", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
     E.cursor_x++;
+    E.preferred_x = E.cursor_x;
 }
 
 void editorDeleteChar() {
@@ -1266,6 +1297,7 @@ void editorDeleteChar() {
         editorRowAppendString(&E.row[E.cursor_y - 1], row->chars, row->size);
         editorDeleteRow(E.cursor_y--);
     }
+    E.preferred_x = E.cursor_x;
 }
 
 void editorInsertNewline() {
@@ -1282,6 +1314,7 @@ void editorInsertNewline() {
 
     E.cursor_y++;
     E.cursor_x = 0;
+    E.preferred_x = E.cursor_x;
 }
 
 void editorDeleteSelectedText() {
@@ -1323,6 +1356,7 @@ void editorDeleteSelectedText() {
 
     E.cursor_x = x1;
     E.cursor_y = y1;
+    E.preferred_x = E.cursor_x;
 
     E.select_mode = 0;
     E.dirty++;
@@ -1339,6 +1373,7 @@ void editorFind() {
     if (query) free(query);
     else {
         E.cursor_x = saved_cursor_x;
+        E.preferred_x = E.cursor_x;
         E.cursor_y = saved_cursor_y;
         E.col_offset = saved_col_offset;
         E.row_offset = saved_row_offset;
@@ -1427,6 +1462,7 @@ void editorFindCallback(char *query, int key) {
             E.cursor_y = row;
             E.cursor_x = editorRowRxToCx(&E.row[row], col);
             E.row_offset = E.num_rows;
+            E.preferred_x = E.cursor_x;
 
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
             if (render_pos >= E.col_offset + E.screen_cols - 1) {
@@ -1663,6 +1699,7 @@ void editorJumpCallback(char *buf, int key) {
 
     E.cursor_y = row;
     E.cursor_x = col;
+    E.preferred_x = col;
     editorScroll();
 }
 
@@ -1689,6 +1726,7 @@ void saveEditorStateForUndo() {
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
         state->cursor_y = E.cursor_y;
+        state->preferred_x = E.preferred_x;
         state->select_mode = E.select_mode;
         state->select_sx = E.select_sx;
         state->select_sy = E.select_sy;
@@ -1718,6 +1756,7 @@ void restoreEditorState(editorState *state) {
 
     E.cursor_x = state->cursor_x;
     E.cursor_y = state->cursor_y;
+    E.preferred_x = state->preferred_x;
     E.select_mode = state->select_mode;
     E.select_sx = state->select_sx;
     E.select_sy = state->select_sy;
@@ -1740,6 +1779,7 @@ void editorUndo() {
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
         state->cursor_y = E.cursor_y;
+        state->preferred_x = E.preferred_x;
         state->select_mode = E.select_mode;
         state->select_sx = E.select_sx;
         state->select_sy = E.select_sy;
@@ -1768,6 +1808,7 @@ void editorRedo() {
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
         state->cursor_y = E.cursor_y;
+        state->preferred_x = E.preferred_x;
         state->select_mode = E.select_mode;
         state->select_sx = E.select_sx;
         state->select_sy = E.select_sy;
