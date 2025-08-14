@@ -44,7 +44,7 @@ This README file has been completely written in Cypher.
 | `Ctrl-C`                              | Copy selected text |
 | `Ctrl-X`                              | Cut selected text |
 | `Ctrl-V`                              | Paste from clipboard |
-| `Ctrl-G / L / _`                      | Jump to line |
+| `Ctrl-G / L`                          | Jump to line |
 | `Ctrl-Z`                              | Undo last major change |
 | `Ctrl-Y`                              | Redo last major change |
 | `Arrow Keys`                          | Move cursor |

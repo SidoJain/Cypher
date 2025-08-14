@@ -145,6 +145,7 @@ static int undo_in_progress = 0;
 /*** Function Prototypes ***/
 
 // utility
+void clear_terminal();
 int is_word_char(int);
 long current_millis();
 
@@ -230,6 +231,7 @@ void editorRedo();
 /*** Main ***/
 
 int main(int argc, char *argv[]) {
+    clear_terminal();
     enableRawMode();
     editorInit();
     if (argc >= 2)
@@ -246,6 +248,10 @@ int main(int argc, char *argv[]) {
 }
 
 /*** Function Definitions ***/
+
+void clear_terminal() {
+    system("clear");
+}
 
 int is_word_char(int c) {
     return isalnum(c) || c == '_';
@@ -269,6 +275,7 @@ void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
     atexit(editorCleanup);
+    atexit(clear_terminal);
 
     struct termios raw = E.original_termios;
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);   // Input flags
@@ -456,8 +463,7 @@ void editorProcessKeypress() {
             }
             break;
 
-        case CTRL_KEY('_'):     // jump to
-        case CTRL_KEY('g'):
+        case CTRL_KEY('g'):     // jump to
         case CTRL_KEY('l'):
             editorJump();
             break;
@@ -626,7 +632,7 @@ void editorMoveCursor(int key) {
 char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t buf_size = 128;
     char *buf = malloc(buf_size);
-    if (buf == NULL)
+    if (!buf)
         die("malloc");
 
     size_t buf_len = 0;
@@ -657,7 +663,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
             if (buf_len == buf_size - 1) {
                 buf_size *= 2;
                 buf = realloc(buf, buf_size);
-                if (buf == NULL)
+                if (!buf)
                     die("realloc");
             }
             buf[buf_len++] = c;
@@ -902,7 +908,7 @@ void editorManualScreen() {
         "  Ctrl-S               - Save",
         "  Ctrl-Q               - Quit",
         "  Ctrl-F               - Find",
-        "  Ctrl-G / L / _       - Jump to line",
+        "  Ctrl-G / L           - Jump to line",
         "  Ctrl-A               - Select all",
         "  Ctrl-Z               - Undo last major change",
         "  Ctrl-Y               - Redo last major change",
@@ -981,7 +987,7 @@ void editorCleanup() {
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
     char *new = realloc(ab->b, ab->len + len);
-    if (new == NULL)
+    if (!new)
         die("realloc");
 
     memcpy(&new[ab->len], str, len);
@@ -996,7 +1002,7 @@ void abFree(appendBuffer *ab) {
 void editorOpen(char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
-    if (E.filename == NULL)
+    if (!E.filename)
         die("strdup");
 
     FILE *fp = fopen(filename, "r");
@@ -1022,7 +1028,7 @@ char *editorRowsToString(int *buf_len) {
     *buf_len = total_len;
 
     char *buf = malloc(total_len);
-    if (buf == NULL)
+    if (!buf)
         die("malloc");
 
     char *ptr = buf;
@@ -1073,13 +1079,13 @@ void editorInsertRow(int at, char *str, size_t len) {
     if (at < 0 || at > E.num_rows) return;
 
     E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
-    if (E.row == NULL)
+    if (!E.row)
         die("realloc");
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.num_rows - at));
 
     E.row[at].size = len;
     E.row[at].chars = malloc(len + 1);
-    if (E.row[at].chars == NULL)
+    if (!E.row[at].chars)
         die("malloc");
 
     memcpy(E.row[at].chars, str, len);
@@ -1100,7 +1106,7 @@ void editorUpdateRow(editorRow *row) {
             tabs++;
     free(row->render);
     row->render = malloc(row->size + tabs * (TAB_SIZE - 1) + 1);
-    if (row->render == NULL)
+    if (!row->render)
         die("malloc");
 
     int idx = 0;
@@ -1148,7 +1154,7 @@ void editorRowInsertChar(editorRow *row, int at, int c) {
         at = row->size;
     
     row->chars = realloc(row->chars, row->size + 2);
-    if (row->chars == NULL)
+    if (!row->chars)
         die("realloc");
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
     row->size++;
@@ -1182,7 +1188,7 @@ void editorDeleteRow(int at) {
 
 void editorRowAppendString(editorRow *row, char *str, size_t len) {
     row->chars = realloc(row->chars, row->size + len + 1);
-    if (row->chars == NULL)
+    if (!row->chars)
         die("realloc");
     memcpy(&row->chars[row->size], str, len);
     row->size += len;
@@ -1450,7 +1456,7 @@ char *editorGetSelectedText() {
     }
 
     char *buf = malloc(total + 1);
-    if (buf == NULL)
+    if (!buf)
         die("malloc");
 
     char *ptr = buf;
