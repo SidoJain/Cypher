@@ -239,12 +239,12 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
 
     editorSetStatusMsg("HELP: Ctrl-H");
-
     while (1) {
         editorRefreshScreen();
         editorProcessKeypress();
     }
 
+    clear_terminal();
     return 0;
 }
 
@@ -275,7 +275,6 @@ void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
     atexit(editorCleanup);
-    atexit(clear_terminal);
 
     struct termios raw = E.original_termios;
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);   // Input flags
@@ -421,6 +420,7 @@ void editorProcessKeypress() {
             }
 
             write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
+            clear_terminal();
             exit(0);
             break;
 
@@ -1007,7 +1007,15 @@ void editorOpen(char *filename) {
         die("strdup");
 
     FILE *fp = fopen(filename, "r");
-    if (!fp) die("fopen");
+    if (!fp) {
+        if (errno == ENOENT) {
+            E.num_rows = 0;
+            E.row = NULL;
+            E.dirty = 0;
+            return;
+        }
+        die("fopen");
+    }
 
     char *line = NULL;
     size_t line_cap = 0;
