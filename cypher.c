@@ -34,6 +34,12 @@
 #define SAVE_TIMES              2
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT            1000
+#define STATUS_LENGTH           80
+#define BUFFER_SIZE             128
+#define PASTE_CHUNK_SIZE        256
+#define STATUS_MSG_TIMEOUT_SEC  5
+#define FILE_PERMS              0644
+#define INVALID_INDEX           -1
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -98,7 +104,7 @@ typedef struct {
     editorRow *row;
     int dirty;
     char *filename;
-    char status_msg[80];
+    char status_msg[STATUS_LENGTH];
     time_t status_msg_time;
     struct termios original_termios;
     int select_mode;
@@ -193,15 +199,15 @@ char *editorRowsToString(int *);
 void editorSave();
 
 // row operations
-void editorInsertRow(int, char *, size_t);
+void editorInsertRow(int, const char *, size_t);
 void editorUpdateRow(editorRow *);
-int editorRowCxToRx(editorRow *, int);
-int editorRowRxToCx(editorRow *, int);
+int editorRowCxToRx(const editorRow *, int);
+int editorRowRxToCx(const editorRow *, int);
 void editorRowInsertChar(editorRow *, int, int);
 void editorRowDeleteChar(editorRow *, int);
 void editorFreeRow(editorRow *);
 void editorDeleteRow(int);
-void editorRowAppendString(editorRow *, char *, size_t);
+void editorRowAppendString(editorRow *, const char *, size_t);
 
 // editor operations
 void editorInsertChar(int);
@@ -227,7 +233,7 @@ void editorJumpCallback(char *, int);
 // undo-redo operations
 void freeEditorState(editorState *);
 void saveEditorStateForUndo();
-void restoreEditorState(editorState *);
+void restoreEditorState(const editorState *);
 void editorUndo();
 void editorRedo();
 
@@ -274,7 +280,7 @@ void die(const char *str) {
 }
 
 void enableRawMode() {
-    if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1) die("tcgetattr");
+    if (tcgetattr(STDIN_FILENO, &E.original_termios) == INVALID_INDEX) die("tcgetattr");
     atexit(disableRawMode);
     atexit(editorCleanup);
 
@@ -286,11 +292,11 @@ void enableRawMode() {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
 
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == INVALID_INDEX) die("tcsetattr");
 }
 
 void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == INVALID_INDEX)
         die("tcsetattr");
 }
 
@@ -298,7 +304,7 @@ int editorReadKey() {
     int nread;
     char c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
-        if (nread == -1 && errno != EAGAIN)
+        if (nread == INVALID_INDEX && errno != EAGAIN)
             die("read");
 
     if (c == ESCAPE_CHAR) {
@@ -380,7 +386,7 @@ int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
 
     // fallback for calculating window size
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == INVALID_INDEX || ws.ws_col == 0) {
         if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1)
             return -1;
         return getCursorPosition(rows, cols);
@@ -486,7 +492,7 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             saveEditorStateForUndo();
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < TAB_SIZE; i++)
                 editorInsertChar(' ');
             break;
 
@@ -654,7 +660,7 @@ void editorMoveCursor(int key) {
 }
 
 char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
-    size_t buf_size = 128;
+    size_t buf_size = BUFFER_SIZE;
     char *buf = malloc(buf_size);
     if (!buf)
         die("malloc");
@@ -879,7 +885,7 @@ void editorScroll() {
 
 void editorDrawStatusBar(appendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
-    char status[80], rstatus[80];
+    char status[STATUS_LENGTH], rstatus[STATUS_LENGTH];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.filename ? E.filename : "[No Name]", E.num_rows, E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor_y + 1, E.cursor_x + 1);
     if (len > E.screen_cols)
@@ -912,7 +918,7 @@ void editorDrawMsgBar(appendBuffer *ab) {
     int msg_len = strlen(E.status_msg);
     if (msg_len > E.screen_cols)
         msg_len = E.screen_cols;
-    if (msg_len && time(NULL) - E.status_msg_time < 5)
+    if (msg_len && time(NULL) - E.status_msg_time < STATUS_MSG_TIMEOUT_SEC)
         abAppend(ab, E.status_msg, msg_len);
 
     if (E.find_active) {
@@ -953,7 +959,7 @@ void editorManualScreen() {
     int lines = sizeof(text) / sizeof(text[0]);
     int row = 1;
     for (int i = 0; i < lines; i++) {
-        char buf[128];
+        char buf[BUFFER_SIZE];
         int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H%s", row++, text[i]);
         write(STDOUT_FILENO, buf, len);
     }
@@ -988,7 +994,7 @@ void editorInit() {
     E.find_current_idx = -1;
     E.find_active = 0;
 
-    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
+    if (getWindowSize(&E.screen_rows, &E.screen_cols) == INVALID_INDEX) die("getWindowSize");
     E.screen_rows -= 2;
 }
 
@@ -1050,7 +1056,7 @@ void editorOpen(char *filename) {
     char *line = NULL;
     size_t line_cap = 0;
     ssize_t line_len;
-    while ((line_len = getline(&line, &line_cap, fp)) != -1) {
+    while ((line_len = getline(&line, &line_cap, fp)) != INVALID_INDEX) {
         while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r'))
             line_len--;
         editorInsertRow(E.num_rows, line, line_len);
@@ -1126,9 +1132,9 @@ void editorSave() {
     int fp = open(E.filename,
                   O_RDWR |     // read and write
                       O_CREAT, // create if doesnt exist
-                  0644);       // permissions
-    if (fp != -1) {
-        if (ftruncate(fp, len) != -1) {
+                  FILE_PERMS); // permissions
+    if (fp != INVALID_INDEX) {
+        if (ftruncate(fp, len) != INVALID_INDEX) {
             if (write(fp, buf, len) == len) {
                 close(fp);
                 free(buf);
@@ -1144,7 +1150,7 @@ void editorSave() {
     editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
 }
 
-void editorInsertRow(int at, char *str, size_t len) {
+void editorInsertRow(int at, const char *str, size_t len) {
     if (at < 0 || at > E.num_rows) return;
 
     E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
@@ -1193,7 +1199,7 @@ void editorUpdateRow(editorRow *row) {
     row->rsize = idx;
 }
 
-int editorRowCxToRx(editorRow *row, int cursor_x) {
+int editorRowCxToRx(const editorRow *row, int cursor_x) {
     int render_x = 0;
     for (int i = 0; i < cursor_x; i++) {
         if (row->chars[i] == '\t')
@@ -1204,7 +1210,7 @@ int editorRowCxToRx(editorRow *row, int cursor_x) {
     return render_x;
 }
 
-int editorRowRxToCx(editorRow *row, int render_x) {
+int editorRowRxToCx(const editorRow *row, int render_x) {
     int cur_render_x = 0;
     int cursor_x;
     for (cursor_x = 0; cursor_x < row->size; cursor_x++) {
@@ -1255,7 +1261,7 @@ void editorDeleteRow(int at) {
     E.dirty++;
 }
 
-void editorRowAppendString(editorRow *row, char *str, size_t len) {
+void editorRowAppendString(editorRow *row, const char *str, size_t len) {
     row->chars = realloc(row->chars, row->size + len + 1);
     if (!row->chars)
         die("realloc");
@@ -1486,7 +1492,7 @@ void clipboardCopyToSystem(const char *data) {
         FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
         int is_wsl = 0;
         if (test_pipe) {
-            char buf[128];
+            char buf[BUFFER_SIZE];
             is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
             pclose(test_pipe);
         }
@@ -1592,7 +1598,7 @@ void editorPaste() {
         FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
         int is_wsl = 0;
         if (test_pipe) {
-            char buf[128];
+            char buf[BUFFER_SIZE];
             is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
             pclose(test_pipe);
         }
@@ -1610,7 +1616,7 @@ void editorPaste() {
     }
 
     saveEditorStateForUndo();
-    char chunk[256];
+    char chunk[PASTE_CHUNK_SIZE];
     size_t len;
     while ((len = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
         clipboard_data = realloc(clipboard_data, buf_size + len + 1);
@@ -1739,7 +1745,7 @@ void saveEditorStateForUndo() {
     last_edit_time = now;
 }
 
-void restoreEditorState(editorState *state) {
+void restoreEditorState(const editorState *state) {
     for (int i = 0; i < E.num_rows; i++)
         editorFreeRow(&E.row[i]);
     free(E.row);
