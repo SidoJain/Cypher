@@ -39,7 +39,6 @@
 #define PASTE_CHUNK_SIZE        256
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define FILE_PERMS              0644
-#define INVALID_INDEX           -1
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -280,7 +279,7 @@ void die(const char *str) {
 }
 
 void enableRawMode() {
-    if (tcgetattr(STDIN_FILENO, &E.original_termios) == INVALID_INDEX) die("tcgetattr");
+    if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
     atexit(editorCleanup);
 
@@ -292,11 +291,11 @@ void enableRawMode() {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
 
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == INVALID_INDEX) die("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
 void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == INVALID_INDEX)
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
         die("tcsetattr");
 }
 
@@ -304,7 +303,7 @@ int editorReadKey() {
     int nread;
     char c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
-        if (nread == INVALID_INDEX && errno != EAGAIN)
+        if (nread == -1 && errno != EAGAIN)
             die("read");
 
     if (c == ESCAPE_CHAR) {
@@ -336,16 +335,12 @@ int editorReadKey() {
                     }
                     if (seq[3] == '2') {
                         switch (seq[4]) {
-                            case 'H': return SHIFT_HOME;
-                            case 'F': return SHIFT_END;
-                        }
-                    }
-                    if (seq[3] == '2') {
-                        switch (seq[4]) {
                             case 'A': return SHIFT_ARROW_UP;
                             case 'B': return SHIFT_ARROW_DOWN;
                             case 'C': return SHIFT_ARROW_RIGHT;
                             case 'D': return SHIFT_ARROW_LEFT;
+                            case 'F': return SHIFT_END;
+                            case 'H': return SHIFT_HOME;
                         }
                     }
                 } else if (seq[2] == EMPTY_LINE_SYMBOL[0]) {
@@ -386,7 +381,7 @@ int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
 
     // fallback for calculating window size
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == INVALID_INDEX || ws.ws_col == 0) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
         if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1)
             return -1;
         return getCursorPosition(rows, cols);
@@ -994,7 +989,7 @@ void editorInit() {
     E.find_current_idx = -1;
     E.find_active = 0;
 
-    if (getWindowSize(&E.screen_rows, &E.screen_cols) == INVALID_INDEX) die("getWindowSize");
+    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
 }
 
@@ -1056,7 +1051,7 @@ void editorOpen(char *filename) {
     char *line = NULL;
     size_t line_cap = 0;
     ssize_t line_len;
-    while ((line_len = getline(&line, &line_cap, fp)) != INVALID_INDEX) {
+    while ((line_len = getline(&line, &line_cap, fp)) != -1) {
         while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r'))
             line_len--;
         editorInsertRow(E.num_rows, line, line_len);
@@ -1133,8 +1128,8 @@ void editorSave() {
                   O_RDWR |     // read and write
                       O_CREAT, // create if doesnt exist
                   FILE_PERMS); // permissions
-    if (fp != INVALID_INDEX) {
-        if (ftruncate(fp, len) != INVALID_INDEX) {
+    if (fp != -1) {
+        if (ftruncate(fp, len) != -1) {
             if (write(fp, buf, len) == len) {
                 close(fp);
                 free(buf);
