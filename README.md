@@ -2,14 +2,14 @@
 
 Cypher is a lightweight terminal-based text editor written in C.  
 It runs in the terminal in **raw mode**.  
-This README file has been completely written in Cypher.  
+This README file has been completely written using Cypher.  
 
 ## Features
 
 - **File Editing**
   - Open and edit text files directly from the terminal.
   - Save changed (`Ctrl-S`) with overwrite support.
-  - Undo (`Ctrl-Z`) and Redo (`Ctrl-Y`) functionality.
+  - Time based Undo (`Ctrl-Z`) and Redo (`Ctrl-Y`) functionality.
 
 - **Navigation**
   - Arrow keys for cursor movement.
@@ -24,6 +24,7 @@ This README file has been completely written in Cypher.
   - Insert new lines (`Enter`).
   - Automatic tab expansion to spaces.
   - Paste command (`Ctrl-V`) from clipboard.
+  - Copy (`Ctrl-C`) and Cut (`Ctrl-X`) commands to clipboard.
 
 - **Search**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
@@ -60,18 +61,17 @@ This README file has been completely written in Cypher.
 
 ## Installation & Compilation
 
-**Requirements:**
+- **Requirements:**
+  - GCC compiler.
+  - POSIX-compliant system (Linux, macOS, WSL).
 
-- GCC compiler.
-- POSIX-compliant system (Linux, macOS, WSL).
-
-**Compile:**
+- **Compile:**
 
 ```bash
 make
 ```
 
-**Run:**
+- **Run:**
 
 ```bash
 # for new file
@@ -81,7 +81,7 @@ make run
 make run FILE={filename}
 ```
 
-**Clean:**
+- **Clean:**
 
 ```bash
 make clean
@@ -89,20 +89,20 @@ make clean
 
 ## Usage
 
-Clone this repo.
+- Clone this repo.
 
 ```bash
 git clone https://github.com/SidoJain/Cypher.git
 cd Cypher
 ```
 
-Make the executable file.
+- Make the executable file.
 
 ```bash
 make
 ```
 
-In ~/.bashrc
+- In ~/.bashrc
 
 ```bash
 # set user friendly alias
@@ -112,7 +112,7 @@ alias cypher='cypher.exe'
 export PATH="<directory_path>:$PATH"
 ```
 
-Use cypher to view/edit any file.
+- Use cypher to view/edit any file.
 
 ```bash
 cypher file.txt
