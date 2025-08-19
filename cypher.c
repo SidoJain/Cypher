@@ -156,6 +156,7 @@ static int undo_in_progress = 0;
 void clear_terminal();
 int is_word_char(int);
 long current_millis();
+char getClosingChar(char);
 
 // terminal
 void die(const char *);
@@ -210,7 +211,7 @@ void editorRowAppendString(editorRow *, const char *, size_t);
 
 // editor operations
 void editorInsertChar(int);
-void editorDeleteChar();
+void editorDeleteChar(int);
 void editorInsertNewline();
 void editorDeleteSelectedText();
 
@@ -269,6 +270,18 @@ long current_millis() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+char getClosingChar(char c) {
+    switch (c) {
+        case '(':  return ')';
+        case '{':  return '}';
+        case '[':  return ']';
+        case '"':  return '"';
+        case '\'': return '\'';
+        case '`':  return '`';
+    }
+    return 0;
 }
 
 void die(const char *str) {
@@ -503,10 +516,13 @@ void editorProcessKeypress() {
             break;
 
         case DEL_KEY:
+            saveEditorStateForUndo();
             editorMoveCursor(ARROW_RIGHT);
+            editorDeleteChar(0);
+            break;
         case BACKSPACE:
             saveEditorStateForUndo();
-            editorDeleteChar();
+            editorDeleteChar(1);
             break;
 
         case PAGE_UP:
@@ -1275,29 +1291,19 @@ void editorInsertChar(int c) {
         E.select_mode = 0;
     }
 
-    char closing_char = 0;
-    switch (c) {
-        case '"':  closing_char = '"';  break;
-        case '\'': closing_char = '\''; break;
-        case '(':  closing_char = ')';  break;
-        case '{':  closing_char = '}';  break;
-        case '[':  closing_char = ']';  break;
-        case '`':  closing_char = '`';  break;
-    }
-
+    char closing_char = getClosingChar(c);
     if (E.cursor_y == E.num_rows)
         editorInsertRow(E.num_rows, "", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
     E.cursor_x++;
 
-    if (closing_char) {
+    if (closing_char && E.row[E.cursor_y].chars[E.cursor_x] != closing_char)
         editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
-    }
     E.preferred_x = E.cursor_x;
     E.dirty++;
 }
 
-void editorDeleteChar() {
+void editorDeleteChar(int is_backspace) {
     if (E.select_mode) {
         editorDeleteSelectedText();
         return;
@@ -1307,14 +1313,28 @@ void editorDeleteChar() {
     if (E.cursor_x == 0 && E.cursor_y == 0) return;
 
     editorRow *row = &E.row[E.cursor_y];
-    if (E.cursor_x > 0)
+    if (E.cursor_x > 0) {
+        char prev_char = row->chars[E.cursor_x - 1];
+        char next_char = (E.cursor_x < row->size) ? row->chars[E.cursor_x] : '\0';
+        char closing_char = getClosingChar(prev_char);
+
+        if (is_backspace && closing_char && next_char == closing_char) {
+            editorRowDeleteChar(row, E.cursor_x);
+            editorRowDeleteChar(row, E.cursor_x - 1);
+            E.cursor_x--;
+            E.preferred_x = E.cursor_x;
+            E.dirty++;
+            return;
+        }
+
         editorRowDeleteChar(row, --E.cursor_x);
-    else {
+    } else {
         E.cursor_x = E.row[E.cursor_y - 1].size;
         editorRowAppendString(&E.row[E.cursor_y - 1], row->chars, row->size);
         editorDeleteRow(E.cursor_y--);
     }
     E.preferred_x = E.cursor_x;
+    E.dirty++;
 }
 
 void editorInsertNewline() {
