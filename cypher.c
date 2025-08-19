@@ -502,8 +502,9 @@ void editorProcessKeypress() {
             }
             break;
 
-        case BACKSPACE:
         case DEL_KEY:
+            editorMoveCursor(ARROW_RIGHT);
+        case BACKSPACE:
             saveEditorStateForUndo();
             editorDeleteChar();
             break;
@@ -1222,7 +1223,7 @@ int editorRowRxToCx(const editorRow *row, int render_x) {
 void editorRowInsertChar(editorRow *row, int at, int c) {
     if (at < 0 || at > row->size)
         at = row->size;
-    
+
     row->chars = realloc(row->chars, row->size + 2);
     if (!row->chars)
         die("realloc");
@@ -1274,11 +1275,26 @@ void editorInsertChar(int c) {
         E.select_mode = 0;
     }
 
+    char closing_char = 0;
+    switch (c) {
+        case '"':  closing_char = '"';  break;
+        case '\'': closing_char = '\''; break;
+        case '(':  closing_char = ')';  break;
+        case '{':  closing_char = '}';  break;
+        case '[':  closing_char = ']';  break;
+        case '`':  closing_char = '`';  break;
+    }
+
     if (E.cursor_y == E.num_rows)
         editorInsertRow(E.num_rows, "", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
     E.cursor_x++;
+
+    if (closing_char) {
+        editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
+    }
     E.preferred_x = E.cursor_x;
+    E.dirty++;
 }
 
 void editorDeleteChar() {
