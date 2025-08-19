@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION "1.0.0"
+#define CYPHER_VERSION "1.1.0"
 #define EMPTY_LINE_SYMBOL "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -169,7 +169,7 @@ int getCursorPosition(int *, int *);
 // input
 void editorProcessKeypress();
 void editorMoveCursor(int);
-char *editorPrompt(char *, void (*)(char *, int));
+char *editorPrompt(const char *, void (*)(char *, int));
 void editorMoveWordLeft();
 void editorMoveWordRight();
 void editorScrollPageUp(int);
@@ -194,7 +194,7 @@ void abAppend(appendBuffer *, const char *, int);
 void abFree(appendBuffer *);
 
 // file i/o
-void editorOpen(char *);
+void editorOpen(const char *);
 char *editorRowsToString(int *);
 void editorSave();
 
@@ -500,7 +500,6 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             saveEditorStateForUndo();
-
             int rx = editorRowCxToRx(&E.row[E.cursor_y], E.cursor_x);
             int spaces = TAB_SIZE - (rx % TAB_SIZE);
             if (spaces == 0)
@@ -676,7 +675,7 @@ void editorMoveCursor(int key) {
         E.cursor_x = row_len;
 }
 
-char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
+char *editorPrompt(const char *prompt, void (*callback)(char *, int)) {
     size_t buf_size = BUFFER_SIZE;
     char *buf = malloc(buf_size);
     if (!buf)
@@ -1053,7 +1052,7 @@ void abFree(appendBuffer *ab) {
     free(ab->b);
 }
 
-void editorOpen(char *filename) {
+void editorOpen(const char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
     if (!E.filename)
@@ -1114,7 +1113,7 @@ void editorSave() {
     static int new_file = 0;
 
     if (E.filename == NULL) {
-        char* input = editorPrompt("Save as: %s (ESC to cancel)", NULL);
+        char *input = editorPrompt("Save as: %s (ESC to cancel)", NULL);
         if (input == NULL) {
             editorSetStatusMsg("Save aborted");
             return;
