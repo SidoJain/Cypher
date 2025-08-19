@@ -1338,19 +1338,40 @@ void editorDeleteChar(int is_backspace) {
 }
 
 void editorInsertNewline() {
+    editorRow *row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
+    int indent_len = 0;
+    while (indent_len < row->size && (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t'))
+        indent_len++;
+
+    char *indent_str = malloc(indent_len + 1);
+    if (!indent_str)
+        die("malloc");
+    memcpy(indent_str, row->chars, indent_len);
+    indent_str[indent_len] = '\0';
+
     if (E.cursor_x == 0)
-        editorInsertRow(E.cursor_y, "", 0);
+        editorInsertRow(E.cursor_y, indent_str, indent_len);
     else {
-        editorRow *row = &E.row[E.cursor_y];
         editorInsertRow(E.cursor_y + 1, &row->chars[E.cursor_x], row->size - E.cursor_x);
         row = &E.row[E.cursor_y];
         row->size = E.cursor_x;
         row->chars[row->size] = '\0';
         editorUpdateRow(row);
+
+        editorRow *new_row = &E.row[E.cursor_y + 1];
+        new_row->chars = realloc(new_row->chars, new_row->size + indent_len + 1);
+        if (!new_row->chars)
+            die("realloc");
+
+        memmove(new_row->chars + indent_len, new_row->chars, new_row->size + 1);
+        memcpy(new_row->chars, indent_str, indent_len);
+        new_row->size += indent_len;
+        editorUpdateRow(new_row);
     }
 
+    free(indent_str);
     E.cursor_y++;
-    E.cursor_x = 0;
+    E.cursor_x = indent_len;
     E.preferred_x = E.cursor_x;
 }
 
