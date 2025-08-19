@@ -500,7 +500,12 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             saveEditorStateForUndo();
-            for (int i = 0; i < TAB_SIZE; i++)
+
+            int rx = editorRowCxToRx(&E.row[E.cursor_y], E.cursor_x);
+            int spaces = TAB_SIZE - (rx % TAB_SIZE);
+            if (spaces == 0)
+                spaces = TAB_SIZE;
+            for (int i = 0; i < spaces; i++)
                 editorInsertChar(' ');
             break;
 
@@ -1317,6 +1322,28 @@ void editorDeleteChar(int is_backspace) {
         char prev_char = row->chars[E.cursor_x - 1];
         char next_char = (E.cursor_x < row->size) ? row->chars[E.cursor_x] : '\0';
         char closing_char = getClosingChar(prev_char);
+
+        if (is_backspace) {
+            int spaces = 0;
+            while (spaces < TAB_SIZE && (E.cursor_x - spaces - 1) >= 0 && row->chars[E.cursor_x - spaces - 1] == ' ')
+                spaces++;
+
+            int only_spaces = 1;
+            for (int i = 0; i < E.cursor_x; i++) {
+                if (row->chars[i] != ' ') {
+                    only_spaces = 0;
+                    break;
+                }
+            }
+
+            if (spaces > 0 && (E.cursor_x % TAB_SIZE == 0) && only_spaces) {
+                for (int i = 0; i < spaces; i++)
+                    editorRowDeleteChar(row, --E.cursor_x);
+                E.preferred_x = E.cursor_x;
+                E.dirty++;
+                return;
+            }
+        }
 
         if (is_backspace && closing_char && next_char == closing_char) {
             editorRowDeleteChar(row, E.cursor_x);
