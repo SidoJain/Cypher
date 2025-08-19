@@ -766,7 +766,7 @@ void editorScrollPageDown(int scroll_amount) {
 
         if (E.cursor_y >= E.num_rows)
             E.cursor_y = E.num_rows - 1;
-        
+
         if (E.cursor_y < E.num_rows) {
             int row_len = E.row[E.cursor_y].size;
             if (E.preferred_x > row_len)
@@ -1202,11 +1202,11 @@ void editorUpdateRow(editorRow *row) {
             row->render[idx++] = ' ';
             while (idx % TAB_SIZE != 0)
                 row->render[idx++] = ' ';
-        } else {
-            row->render[idx++] = row->chars[i];
         }
+        else
+            row->render[idx++] = row->chars[i];
     }
-    
+
     row->render[idx] = '\0';
     row->rsize = idx;
 }
@@ -1367,6 +1367,24 @@ void editorInsertNewline() {
         memcpy(new_row->chars, indent_str, indent_len);
         new_row->size += indent_len;
         editorUpdateRow(new_row);
+
+        if (E.cursor_x > 0 && (row->chars[E.cursor_x - 1] == '{' || row->chars[E.cursor_x - 1] == '[' || row->chars[E.cursor_x - 1] == '(') && new_row->size > 0 && new_row->chars[indent_len] == getClosingChar(row->chars[E.cursor_x - 1])) {
+            int new_indent_len = indent_len + TAB_SIZE;
+            char *block_indent = malloc(new_indent_len + 1);
+            if (!block_indent)
+                die("malloc");
+            memset(block_indent, ' ', new_indent_len);
+            block_indent[new_indent_len] = '\0';
+            editorInsertRow(E.cursor_y + 1, block_indent, new_indent_len);
+            free(block_indent);
+
+            E.cursor_y++;
+            E.cursor_x = new_indent_len;
+            E.preferred_x = E.cursor_x;
+
+            free(indent_str);
+            return;
+        }
     }
 
     free(indent_str);
@@ -1381,7 +1399,6 @@ void editorDeleteSelectedText() {
 
     int y1 = E.select_sy, x1 = E.select_sx;
     int y2 = E.select_ey, x2 = E.select_ex;
-
     if (y1 > y2 || (y1 == y2 && x1 > x2)) {
         int tmpx = x1, tmpy = y1;
         x1 = x2;
