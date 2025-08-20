@@ -28,6 +28,7 @@ This README file has been completely written using Cypher.
 
 - **Search**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
+  - Works with pre-selected text well.
 
 - **Status & Message Bars**
   - Displays filename, total lines and cursor line.
