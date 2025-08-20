@@ -459,7 +459,6 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('f'):     // find
-            E.select_mode = 0;
             E.has_match_bracket = 0;
             editorFind();
             updateMatchBracket();
@@ -729,6 +728,18 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int)) {
     size_t buf_len = 0;
     buf[0] = '\0';
 
+    char *initial = editorGetSelectedText();
+    if (initial) {
+        buf_len = strlen(initial);
+        if (buf_len >= buf_size) {
+            buf_size = buf_len * 2;
+            buf = realloc(buf, buf_size);
+            if (!buf) die("realloc");
+        }
+        strcpy(buf, initial);
+        free(initial);
+    }
+
     while (1) {
         editorSetStatusMsg(prompt, buf);
         editorRefreshScreen();
@@ -902,7 +913,7 @@ void editorDrawRows(appendBuffer *ab) {
 
                 int is_find = 0;
                 int is_current_match = 0;
-                if (E.find_active && !E.select_mode && E.find_query) {
+                if (E.find_active && E.find_query) {
                     int match_len = strlen(E.find_query);
                     for (int m = 0; m < E.find_num_matches; m++) {
                         if (E.find_match_lines[m] == file_row) {
@@ -918,7 +929,7 @@ void editorDrawRows(appendBuffer *ab) {
                     }
                 }
 
-                if (is_sel) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
+                if (is_sel && !is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
                 else if (is_current_match) abAppend(ab, YELLOW_FG_COLOR, sizeof(YELLOW_FG_COLOR) - 1);
                 else if (is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
 
