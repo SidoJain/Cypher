@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION "1.1.1"
+#define CYPHER_VERSION "1.1.2"
 #define EMPTY_LINE_SYMBOL "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -52,8 +52,9 @@
 #define HIDE_CURSOR             "\x1b[?25l"
 #define REMOVE_GRAPHICS         "\x1b[m"
 #define INVERTED_COLORS         "\x1b[7m"
-#define YELLOW_COLOR            "\x1b[33m"
-#define GRAY_COLOR              "\x1b[90m"
+#define YELLOW_FG_COLOR         "\x1b[33m"
+#define DARK_GRAY_BG_COLOR      "\x1b[48;5;238m"
+#define LIGHT_GRAY_BG_COLOR     "\x1b[48;5;242m"
 
 /*** Structs and Enums ***/
 
@@ -458,7 +459,10 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('f'):     // find
+            E.select_mode = 0;
+            E.has_match_bracket = 0;
             editorFind();
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('c'):     // copy
@@ -467,10 +471,12 @@ void editorProcessKeypress() {
 
         case CTRL_KEY('x'):     // cut
             editorCutSelection();
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('v'):     // paste
             editorPaste();
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('a'):     // select all
@@ -486,6 +492,7 @@ void editorProcessKeypress() {
 
                 editorSetStatusMsg("Selected all %d lines", E.num_rows);
             }
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('g'):     // jump to
@@ -525,9 +532,11 @@ void editorProcessKeypress() {
         case HOME_KEY:
             E.cursor_x = 0;
             E.preferred_x = E.cursor_x;
+            E.select_mode = 0;
             updateMatchBracket();
             break;
         case END_KEY:
+            E.select_mode = 0;
             if (E.cursor_y < E.num_rows) {
                 E.cursor_x = E.row[E.cursor_y].size;
                 E.preferred_x = E.cursor_x;
@@ -909,14 +918,43 @@ void editorDrawRows(appendBuffer *ab) {
                     }
                 }
 
-                if (is_sel) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
-                else if (is_current_match) abAppend(ab, YELLOW_COLOR, sizeof(YELLOW_COLOR) - 1);
-                else if (is_find) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
+                if (is_sel) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
+                else if (is_current_match) abAppend(ab, YELLOW_FG_COLOR, sizeof(YELLOW_FG_COLOR) - 1);
+                else if (is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
 
-                if (E.has_match_bracket && ((file_row == E.cursor_y && cx == E.cursor_x) || (file_row == E.match_bracket_y && cx == E.match_bracket_x))) {
-                    abAppend(ab, GRAY_COLOR, sizeof(GRAY_COLOR) - 1);
-                    abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
-                    abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
+                if (E.has_match_bracket && !E.select_mode && !E.find_active) {
+                    int start_row = E.cursor_y;
+                    int start_col = E.cursor_x;
+                    int end_row = E.match_bracket_y;
+                    int end_col = E.match_bracket_x;
+
+                    if (start_row > end_row || (start_row == end_row && start_col > end_col)) {
+                        int tmp_r = start_row, tmp_c = start_col;
+                        start_row = end_row;
+                        start_col = end_col;
+                        end_row = tmp_r;
+                        end_col = tmp_c;
+                    }
+
+                    if (file_row >= start_row && file_row <= end_row) {
+                        int highlight_start_col = 0;
+                        int highlight_end_col = E.row[file_row].size;
+
+                        if (file_row == start_row)
+                            highlight_start_col = start_col;
+                        if (file_row == end_row)
+                            highlight_end_col = end_col + 1;
+
+                        if (cx >= highlight_start_col && cx < highlight_end_col) {
+                            abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
+                            abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                            abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
+                        } else {
+                            abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                        }
+                    } else {
+                        abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                    }
                 } else {
                     abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
                 }
