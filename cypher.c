@@ -1872,10 +1872,11 @@ void editorJump() {
 
     if (input) {
         free(input);
-        if (E.cursor_x == saved_cursor_x && E.cursor_y == saved_cursor_y && E.col_offset == saved_col_offset && E.row_offset == saved_row_offset)
+        if (E.cursor_x == saved_cursor_x && E.cursor_y == saved_cursor_y && E.col_offset == saved_col_offset && E.row_offset == saved_row_offset) {
             editorSetStatusMsg("Invalid input");
-        else
+        } else {
             editorSetStatusMsg("Jumped");
+        }
     } else {
         E.cursor_x = saved_cursor_x;
         E.cursor_y = saved_cursor_y;
