@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION "1.1.0"
+#define CYPHER_VERSION "1.1.1"
 #define EMPTY_LINE_SYMBOL "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -53,6 +53,7 @@
 #define REMOVE_GRAPHICS         "\x1b[m"
 #define INVERTED_COLORS         "\x1b[7m"
 #define YELLOW_COLOR            "\x1b[33m"
+#define GRAY_COLOR              "\x1b[90m"
 
 /*** Structs and Enums ***/
 
@@ -118,6 +119,9 @@ typedef struct {
     int find_num_matches;
     int find_current_idx;
     int find_active;
+    int match_bracket_x;
+    int match_bracket_y;
+    int has_match_bracket;
 } editorConfig;
 
 typedef struct {
@@ -236,6 +240,11 @@ void saveEditorStateForUndo();
 void restoreEditorState(const editorState *);
 void editorUndo();
 void editorRedo();
+
+// bracket highlighting
+char getMatchingBracket(char);
+int findMatchingBracketPosition(int, int, int *, int *);
+void updateMatchBracket();
 
 /*** Main ***/
 
@@ -482,20 +491,24 @@ void editorProcessKeypress() {
         case CTRL_KEY('g'):     // jump to
         case CTRL_KEY('l'):
             editorJump();
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('z'):     // undo
             editorUndo();
+            updateMatchBracket();
             break;
 
         case CTRL_KEY('y'):     // redo
             editorRedo();
+            updateMatchBracket();
             break;
 
         case '\r':              // enter
             saveEditorStateForUndo();
             editorDeleteSelectedText();
             editorInsertNewline();
+            updateMatchBracket();
             break;
 
         case '\t':              // tab
@@ -506,47 +519,58 @@ void editorProcessKeypress() {
                 spaces = TAB_SIZE;
             for (int i = 0; i < spaces; i++)
                 editorInsertChar(' ');
+            updateMatchBracket();
             break;
 
         case HOME_KEY:
             E.cursor_x = 0;
             E.preferred_x = E.cursor_x;
+            updateMatchBracket();
             break;
         case END_KEY:
             if (E.cursor_y < E.num_rows) {
                 E.cursor_x = E.row[E.cursor_y].size;
                 E.preferred_x = E.cursor_x;
             }
+            updateMatchBracket();
             break;
 
         case DEL_KEY:
             saveEditorStateForUndo();
             editorMoveCursor(ARROW_RIGHT);
             editorDeleteChar(0);
+            updateMatchBracket();
             break;
         case BACKSPACE:
             saveEditorStateForUndo();
             editorDeleteChar(1);
+            updateMatchBracket();
             break;
 
         case PAGE_UP:
             editorScrollPageUp(E.screen_rows);
+            updateMatchBracket();
             break;
         case PAGE_DOWN:
             editorScrollPageDown(E.screen_rows);
+            updateMatchBracket();
             break;
 
         case CTRL_ARROW_LEFT:
             editorMoveWordLeft();
+            updateMatchBracket();
             break;
         case CTRL_ARROW_RIGHT:
             editorMoveWordRight();
+            updateMatchBracket();
             break;
         case CTRL_ARROW_UP:
             editorScrollPageUp(1);
+            updateMatchBracket();
             break;
         case CTRL_ARROW_DOWN:
             editorScrollPageDown(1);
+            updateMatchBracket();
             break;
 
         case SHIFT_ARROW_LEFT:
@@ -561,6 +585,7 @@ void editorProcessKeypress() {
             editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            updateMatchBracket();
             break;
 
         case CTRL_SHIFT_ARROW_LEFT:
@@ -572,6 +597,7 @@ void editorProcessKeypress() {
             editorMoveWordLeft();
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            updateMatchBracket();
             break;
         case CTRL_SHIFT_ARROW_RIGHT:
             if (!E.select_mode) {
@@ -582,6 +608,7 @@ void editorProcessKeypress() {
             editorMoveWordRight();
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            updateMatchBracket();
             break;
         case CTRL_SHIFT_ARROW_UP:
         case CTRL_SHIFT_ARROW_DOWN:
@@ -596,6 +623,7 @@ void editorProcessKeypress() {
             E.cursor_x = 0;
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            updateMatchBracket();
             break;
         case SHIFT_END:
             if (!E.select_mode) {
@@ -607,6 +635,7 @@ void editorProcessKeypress() {
                 E.cursor_x = E.row[E.cursor_y].size;
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
+            updateMatchBracket();
             break;
 
         case ARROW_LEFT:
@@ -616,6 +645,12 @@ void editorProcessKeypress() {
             undo_in_progress = 0;
             E.select_mode = 0;
             editorMoveCursor(c);
+            updateMatchBracket();
+            break;
+        
+        case ESCAPE_CHAR:
+            if (E.select_mode)
+                E.select_mode = 0;
             break;
 
         default:
@@ -623,6 +658,7 @@ void editorProcessKeypress() {
                 saveEditorStateForUndo();
                 editorInsertChar(c);
             }
+            updateMatchBracket();
             break;
     }
 
@@ -876,7 +912,15 @@ void editorDrawRows(appendBuffer *ab) {
                 if (is_sel) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
                 else if (is_current_match) abAppend(ab, YELLOW_COLOR, sizeof(YELLOW_COLOR) - 1);
                 else if (is_find) abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
-                abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+
+                if (E.has_match_bracket && ((file_row == E.cursor_y && cx == E.cursor_x) || (file_row == E.match_bracket_y && cx == E.match_bracket_x))) {
+                    abAppend(ab, GRAY_COLOR, sizeof(GRAY_COLOR) - 1);
+                    abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                    abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
+                } else {
+                    abAppend(ab, &E.row[file_row].render[j + E.col_offset], 1);
+                }
+
                 if (is_sel || is_find || is_current_match) abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
             }
         }
@@ -1368,6 +1412,8 @@ void editorInsertNewline() {
     int indent_len = 0;
     while (indent_len < row->size && (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t'))
         indent_len++;
+    if (indent_len > E.cursor_x)
+        indent_len = E.cursor_x;
 
     char *indent_str = malloc(indent_len + 1);
     if (!indent_str)
@@ -1923,4 +1969,74 @@ void editorRedo() {
     freeEditorState(redo_st);
     redo_top--;
     editorSetStatusMsg("Redo");
+}
+
+char getMatchingBracket(char c) {
+    switch (c) {
+        case '(': return ')';
+        case ')': return '(';
+        case '{': return '}';
+        case '}': return '{';
+        case '[': return ']';
+        case ']': return '[';
+    }
+    return 0;
+}
+
+int findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *match_x) {
+    if (cursor_y >= E.num_rows || cursor_x >= E.row[cursor_y].size)
+        return 0;
+
+    char c = E.row[cursor_y].chars[cursor_x];
+    if (!(c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']'))
+        return 0;
+
+    char match = getMatchingBracket(c);
+    int direction = (c == '(' || c == '{' || c == '[') ? 1 : -1;
+    int count = 1;
+
+    int y = cursor_y;
+    int x = cursor_x;
+    while (1) {
+        if (direction == 1) {
+            x++;
+            while (y < E.num_rows && x >= E.row[y].size) {
+                y++;
+                x = 0;
+            }
+            if (y >= E.num_rows) break;
+        } else {
+            x--;
+            while (y >= 0 && x < 0) {
+                y--;
+                if (y >= 0) x = E.row[y].size - 1;
+            }
+            if (y < 0) break;
+        }
+
+        char ch = E.row[y].chars[x];
+        if (ch == c)
+            count++;
+        else if (ch == match)
+            count--;
+
+        if (count == 0) {
+            *match_y = y;
+            *match_x = x;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+void updateMatchBracket() {
+    int mx, my;
+    if (findMatchingBracketPosition(E.cursor_y, E.cursor_x, &my, &mx)) {
+        E.match_bracket_x = mx;
+        E.match_bracket_y = my;
+        E.has_match_bracket = 1;
+    } else {
+        E.has_match_bracket = 0;
+    }
 }
