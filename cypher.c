@@ -1636,15 +1636,24 @@ void editorFindCallback(char *query, int key) {
             E.cursor_y = row;
             E.cursor_x = editorRowRxToCx(&E.row[row], col);
             E.row_offset = E.num_rows;
+            E.preferred_x = E.cursor_x;
+
+            if (row < E.row_offset) {
+                E.row_offset = row;
+            } else if (row >= E.row_offset + E.screen_rows) {
+                E.row_offset = row - E.screen_rows + 1;
+            }
 
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-            if (render_pos >= E.col_offset + E.screen_cols - 1) {
-                int margin = strlen(query) + 3;
+            int margin = strlen(query) + 3;
+            if (render_pos < E.col_offset) {
+                E.col_offset = render_pos;
+            } else if (render_pos >= E.col_offset + E.screen_cols - 1) {
                 if (render_pos > margin) {
                     E.col_offset = render_pos - (E.screen_cols - margin);
-                    if (E.col_offset < 0) E.col_offset = 0;
                 }
             }
+            if (E.col_offset < 0) E.col_offset = 0;
         }
         E.find_active = 1;
     } else {
@@ -1657,17 +1666,24 @@ void editorFindCallback(char *query, int key) {
             int col = E.find_match_cols[E.find_current_idx];
             E.cursor_y = row;
             E.cursor_x = editorRowRxToCx(&E.row[row], col);
-            E.row_offset = E.num_rows;
             E.preferred_x = E.cursor_x;
 
+            if (row < E.row_offset) {
+                E.row_offset = row;
+            } else if (row >= E.row_offset + E.screen_rows) {
+                E.row_offset = row - E.screen_rows + 1;
+            }
+
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-            if (render_pos >= E.col_offset + E.screen_cols - 1) {
-                int margin = strlen(query) + 3;
+            int margin = strlen(query) + 3;
+            if (render_pos < E.col_offset) {
+                E.col_offset = render_pos;
+            } else if (render_pos >= E.col_offset + E.screen_cols - 1) {
                 if (render_pos > margin) {
                     E.col_offset = render_pos - (E.screen_cols - margin);
-                    if (E.col_offset < 0) E.col_offset = 0;
                 }
             }
+            if (E.col_offset < 0) E.col_offset = 0;
         }
     }
 }
