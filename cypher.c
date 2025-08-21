@@ -114,6 +114,7 @@ typedef struct {
     int select_ex;
     int select_ey;
     char *clipboard;
+    int is_pasting;
     char *find_query;
     int *find_match_lines;
     int *find_match_cols;
@@ -405,8 +406,7 @@ int getWindowSize(int *rows, int *cols) {
 
     // fallback for calculating window size
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1)
-            return -1;
+        if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) return -1;
         return getCursorPosition(rows, cols);
     } else {
         *rows = ws.ws_row;
@@ -1091,6 +1091,7 @@ void editorInit() {
     E.status_msg[0] = '\0';
     E.status_msg_time = 0;
     E.clipboard = NULL;
+    E.is_pasting = 0;
     E.select_mode = 0;
     E.select_sx = 0;
     E.select_sy = 0;
@@ -1102,6 +1103,9 @@ void editorInit() {
     E.find_num_matches = 0;
     E.find_current_idx = -1;
     E.find_active = 0;
+    E.match_bracket_x = 0;
+    E.match_bracket_y = 0;
+    E.has_match_bracket = 0;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -1394,7 +1398,7 @@ void editorInsertChar(int c) {
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
     E.cursor_x++;
 
-    if (closing_char && E.row[E.cursor_y].chars[E.cursor_x] != closing_char)
+    if (!E.is_pasting && closing_char && E.row[E.cursor_y].chars[E.cursor_x] != closing_char)
         editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
     E.preferred_x = E.cursor_x;
     E.dirty++;
@@ -1463,6 +1467,8 @@ void editorInsertNewline() {
         indent_len++;
     if (indent_len > E.cursor_x)
         indent_len = E.cursor_x;
+    if (E.is_pasting)
+        indent_len = 0;
 
     char *indent_str = malloc(indent_len + 1);
     if (!indent_str)
@@ -1813,6 +1819,7 @@ void editorPaste() {
         return;
     }
 
+    E.is_pasting = 1;
     saveEditorStateForUndo();
     char chunk[PASTE_CHUNK_SIZE];
     size_t len;
@@ -1829,6 +1836,7 @@ void editorPaste() {
     if (!clipboard_data || buf_size == 0) {
         free(clipboard_data);
         editorSetStatusMsg("Clipboard is empty");
+        E.is_pasting = 0;
         return;
     }
 
@@ -1839,9 +1847,19 @@ void editorPaste() {
             clipboard_data[j++] = clipboard_data[i];
     clipboard_data[j] = '\0';
 
-    if (E.select_mode) {
-        editorDeleteSelectedText();
+    char indent[128] = {0};
+    int indent_len = 0;
+    if (E.cursor_y < E.num_rows) {
+        editorRow *row = &E.row[E.cursor_y];
+        while (indent_len < row->size && (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t')) {
+            indent[indent_len] = row->chars[indent_len];
+            indent_len++;
+        }
+        indent[indent_len] = '\0';
     }
+
+    if (E.select_mode)
+        editorDeleteSelectedText();
 
     char *line_start = clipboard_data;
     char *newline_pos;
@@ -1849,17 +1867,20 @@ void editorPaste() {
         size_t chunk_len = newline_pos - line_start;
         for (size_t i = 0; i < chunk_len; i++)
             editorInsertChar(line_start[i]);
-        if (*(newline_pos + 1) != '\0')
+        if (*(newline_pos + 1) != '\0') {
             editorInsertNewline();
+            for (int i = 0; i < indent_len; i++)
+                editorInsertChar(indent[i]);
+        }
         line_start = newline_pos + 1;
     }
 
-    while (*line_start) {
+    while (*line_start)
         editorInsertChar(*line_start++);
-    }
 
     editorSetStatusMsg("Pasted %zu bytes from system clipboard", buf_size);
     free(clipboard_data);
+    E.is_pasting = 0;
 }
 
 void editorJump() {
@@ -1872,11 +1893,10 @@ void editorJump() {
 
     if (input) {
         free(input);
-        if (E.cursor_x == saved_cursor_x && E.cursor_y == saved_cursor_y && E.col_offset == saved_col_offset && E.row_offset == saved_row_offset) {
+        if (E.cursor_x == saved_cursor_x && E.cursor_y == saved_cursor_y && E.col_offset == saved_col_offset && E.row_offset == saved_row_offset)
             editorSetStatusMsg("Invalid input");
-        } else {
+        else
             editorSetStatusMsg("Jumped");
-        }
     } else {
         E.cursor_x = saved_cursor_x;
         E.cursor_y = saved_cursor_y;
