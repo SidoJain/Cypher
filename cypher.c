@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION "1.1.2"
+#define CYPHER_VERSION "1.1.3"
 #define EMPTY_LINE_SYMBOL "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -172,9 +172,9 @@ static int undo_in_progress = 0;
 /*** Function Prototypes ***/
 
 // utility
-void clear_terminal();
-int is_word_char(int);
-long current_millis();
+void clearTerminal();
+int isWordChar(int);
+long currentMillis();
 char getClosingChar(char);
 
 // terminal
@@ -267,7 +267,7 @@ void updateMatchBracket();
 /*** Main ***/
 
 int main(int argc, char *argv[]) {
-    clear_terminal();
+    clearTerminal();
     enableRawMode();
     editorInit();
     if (argc >= 2)
@@ -279,21 +279,21 @@ int main(int argc, char *argv[]) {
         editorProcessKeypress();
     }
 
-    clear_terminal();
+    clearTerminal();
     return 0;
 }
 
 /*** Function Definitions ***/
 
-void clear_terminal() {
+void clearTerminal() {
     system("clear");
 }
 
-int is_word_char(int c) {
+int isWordChar(int c) {
     return isalnum(c) || c == '_';
 }
 
-long current_millis() {
+long currentMillis() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
@@ -518,7 +518,7 @@ void editorProcessKeypress() {
             }
 
             write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
-            clear_terminal();
+            clearTerminal();
             exit(0);
             break;
 
@@ -868,9 +868,9 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int)) {
 void editorMoveWordLeft() {
     if (E.cursor_y >= E.num_rows) return;
 
-    while (E.cursor_x > 0 && !is_word_char(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+    while (E.cursor_x > 0 && !isWordChar(E.row[E.cursor_y].chars[E.cursor_x - 1]))
         E.cursor_x--;
-    while (E.cursor_x > 0 && is_word_char(E.row[E.cursor_y].chars[E.cursor_x - 1]))
+    while (E.cursor_x > 0 && isWordChar(E.row[E.cursor_y].chars[E.cursor_x - 1]))
         E.cursor_x--;
     E.preferred_x = E.cursor_x;
 }
@@ -879,9 +879,9 @@ void editorMoveWordRight() {
     if (E.cursor_y >= E.num_rows) return;
 
     int len = E.row[E.cursor_y].size;
-    while (E.cursor_x < len && !is_word_char(E.row[E.cursor_y].chars[E.cursor_x]))
+    while (E.cursor_x < len && !isWordChar(E.row[E.cursor_y].chars[E.cursor_x]))
         E.cursor_x++;
-    while (E.cursor_x < len && is_word_char(E.row[E.cursor_y].chars[E.cursor_x]))
+    while (E.cursor_x < len && isWordChar(E.row[E.cursor_y].chars[E.cursor_x]))
         E.cursor_x++;
     E.preferred_x = E.cursor_x;
 }
@@ -2039,7 +2039,7 @@ void freeEditorState(editorState *state) {
 }
 
 void saveEditorStateForUndo() {
-    long now = current_millis();
+    long now = currentMillis();
 
     if (undo_top >= UNDO_REDO_STACK_SIZE - 1)
         return;
