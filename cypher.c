@@ -38,7 +38,6 @@
 #define BUFFER_SIZE             128
 #define PASTE_CHUNK_SIZE        256
 #define STATUS_MSG_TIMEOUT_SEC  5
-#define FILE_PERMS              0644
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -82,7 +81,9 @@ enum editorKey {
     HOME_KEY,
     END_KEY,
     PAGE_UP,
-    PAGE_DOWN
+    PAGE_DOWN,
+    ALT_ARROW_UP,
+    ALT_ARROW_DOWN
 };
 
 enum environment {
@@ -223,6 +224,8 @@ void editorRowDeleteChar(editorRow *, int);
 void editorFreeRow(editorRow *);
 void editorDeleteRow(int);
 void editorRowAppendString(editorRow *, const char *, size_t);
+void editorMoveRowUp();
+void editorMoveRowDown();
 
 // editor operations
 void editorInsertChar(int);
@@ -384,6 +387,12 @@ int editorReadKey() {
                             case 'B': return CTRL_ARROW_DOWN;
                             case 'C': return CTRL_ARROW_RIGHT;
                             case 'D': return CTRL_ARROW_LEFT;
+                        }
+                    }
+                    if (seq[3] == '3') {
+                        switch (seq[4]) {
+                            case 'A': return ALT_ARROW_UP;
+                            case 'B': return ALT_ARROW_DOWN;
                         }
                     }
                     if (seq[3] == '2') {
@@ -683,6 +692,15 @@ void editorProcessKeypress() {
             E.select_mode = 0;
             editorMoveCursor(c);
             updateMatchBracket();
+            break;
+
+        case ALT_ARROW_UP:
+            saveEditorStateForUndo();
+            editorMoveRowUp();
+            break;
+        case ALT_ARROW_DOWN:
+            saveEditorStateForUndo();
+            editorMoveRowDown();
             break;
 
         case ESCAPE_CHAR:
@@ -1273,9 +1291,9 @@ void editorSave() {
     char *buf = editorRowsToString(&len);
 
     int fp = open(E.filename,
-                  O_RDWR |     // read and write
-                      O_CREAT, // create if doesnt exist
-                  FILE_PERMS); // permissions
+                  O_RDWR |      // read and write
+                      O_CREAT,  // create if doesnt exist
+                  0644);        // permissions
     if (fp != -1) {
         if (ftruncate(fp, len) != -1) {
             if (write(fp, buf, len) == len) {
@@ -1412,6 +1430,28 @@ void editorRowAppendString(editorRow *row, const char *str, size_t len) {
     row->size += len;
     row->chars[row->size] = '\0';
     editorUpdateRow(row);
+    E.dirty++;
+}
+
+void editorMoveRowUp() {
+    if (E.cursor_y <= 0 || E.cursor_y >= E.num_rows) return;
+
+    editorRow temp = E.row[E.cursor_y - 1];
+    E.row[E.cursor_y - 1] = E.row[E.cursor_y];
+    E.row[E.cursor_y] = temp;
+
+    E.cursor_y--;
+    E.dirty++;
+}
+
+void editorMoveRowDown() {
+    if (E.cursor_y < 0 || E.cursor_y >= E.num_rows - 1) return;
+
+    editorRow temp = E.row[E.cursor_y + 1];
+    E.row[E.cursor_y + 1] = E.row[E.cursor_y];
+    E.row[E.cursor_y] = temp;
+
+    E.cursor_y++;
     E.dirty++;
 }
 
