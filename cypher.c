@@ -85,6 +85,13 @@ enum editorKey {
     PAGE_DOWN
 };
 
+enum environment {
+    WSL,
+    LINUX,
+    MACOS,
+    UNKNOWN
+};
+
 typedef struct {
     int size;
     int rsize;
@@ -124,6 +131,7 @@ typedef struct {
     int match_bracket_x;
     int match_bracket_y;
     int has_match_bracket;
+    int env;
 } editorConfig;
 
 typedef struct {
@@ -165,6 +173,7 @@ long current_millis();
 char getClosingChar(char);
 
 // terminal
+int getEnv();
 void die(const char *);
 void enableRawMode();
 void disableRawMode();
@@ -293,6 +302,26 @@ char getClosingChar(char c) {
         case '`':  return '`';
     }
     return 0;
+}
+
+int getEnv() {
+    #if defined(__APPLE__)          // macOS
+        return MACOS;
+    #elif defined(__linux__)        // Linux or WSL
+        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
+        int is_wsl = 0;
+        if (test_pipe) {
+            char buf[BUFFER_SIZE];
+            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
+            pclose(test_pipe);
+        }
+        if (is_wsl)                 // WSL
+            return WSL;
+        else                        // Linux
+            return LINUX;
+    #else                           // Default Fallback
+        return UNKNOWN;
+    #endif
 }
 
 void die(const char *str) {
@@ -1106,6 +1135,7 @@ void editorInit() {
     E.match_bracket_x = 0;
     E.match_bracket_y = 0;
     E.has_match_bracket = 0;
+    E.env = getEnv();
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -1690,24 +1720,20 @@ void clipboardCopyToSystem(const char *data) {
     if (!data) return;
     FILE *pipe = NULL;
 
-    #if defined(__APPLE__)          // macOS
-        pipe = popen("pbcopy", "w");
-    #elif defined(__linux__)        // Linux or WSL
-        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
-        int is_wsl = 0;
-        if (test_pipe) {
-            char buf[BUFFER_SIZE];
-            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
-            pclose(test_pipe);
-        }
-
-        if (is_wsl)                 // WSL
+    switch (E.env) {
+        case MACOS:
+            pipe = popen("pbcopy", "w");
+            break;
+        case WSL:
             pipe = popen("clip.exe", "w");
-        else                        // Linux
+            break;
+        case LINUX:
             pipe = popen("xclip -selection clipboard", "w");
-    #else                           // Default Fallback
-        pipe = popen("xclip -selection clipboard", "w");
-    #endif
+            break;
+        case UNKNOWN:
+            pipe = popen("xclip -selection clipboard", "w");
+            break;
+    }
 
     if (pipe) {
         fwrite(data, 1, strlen(data), pipe);
@@ -1796,23 +1822,20 @@ void editorPaste() {
     size_t buf_size = 0;
     FILE *pipe = NULL;
 
-    #if defined(__APPLE__)          // macOS
-        pipe = popen("pbpaste", "r");
-    #elif defined(__linux__)        // Linux or WSL
-        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
-        int is_wsl = 0;
-        if (test_pipe) {
-            char buf[BUFFER_SIZE];
-            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
-            pclose(test_pipe);
-        }
-        if (is_wsl)                 // WSL
+    switch (E.env) {
+        case MACOS:
+            pipe = popen("pbpaste", "r");
+            break;
+        case WSL:
             pipe = popen("powershell.exe Get-Clipboard", "r");
-        else                        // Linux
+            break;
+        case LINUX:
             pipe = popen("xclip -selection clipboard -o 2>/dev/null", "r");
-    #else                           // Default Fallback
-        pipe = popen("xclip -selection clipboard -o", "r");
-    #endif
+            break;
+        case UNKNOWN:
+            pipe = popen("xclip -selection clipboard -o", "r");
+            break;
+    }
 
     if (!pipe) {
         editorSetStatusMsg("Clipboard tool missing or inaccessible");
