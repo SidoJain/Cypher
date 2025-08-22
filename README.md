@@ -21,7 +21,7 @@ This README file has been completely written using Cypher.
 
 - **Editing Operations**
   - Insert text anywhere.
-  - Backspace/Delete characters.
+  - Backspace / Delete characters.
   - Insert new lines (`Enter`).
   - Automatic tab expansion to spaces.
   - Paste command (`Ctrl-V`) from clipboard.
@@ -58,10 +58,10 @@ This README file has been completely written using Cypher.
 | `Backspace`                           | Delete character left of cursor |
 | `Delete`                              | Delete character under cursor |
 | `Enter`                               | Insert new line |
-| `Shift-ArrowKeys/Home/End`            | Select text |
-| `Ctrl-Left/Right`                     | Skip words |
-| `Ctrl-Up/Down`                        | Scroll up / down |
-| `Alt-Up/Down`                         | Move row up / down |
+| `Shift-ArrowKeys / Home / End`        | Select text |
+| `Ctrl-Left / Right`                   | Skip words |
+| `Ctrl-Up / Down`                      | Scroll up / down |
+| `Alt-Up / Down`                       | Move row up / down |
 
 ## Installation & Compilation
 
