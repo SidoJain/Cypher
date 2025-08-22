@@ -3,3 +3,4 @@
 *.exe
 *.txt
 data_generator.c
+raw_mode.c
