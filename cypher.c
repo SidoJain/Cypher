@@ -19,15 +19,11 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION "1.1.3"
-#define EMPTY_LINE_SYMBOL "~"
+#define CYPHER_VERSION      "1.1.3"
+#define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
 #define APPEND_BUFFER_INIT  {NULL, 0}
-
-#define	STDIN_FILENO	0
-#define	STDOUT_FILENO	1
-#define	STDERR_FILENO	2
 
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
@@ -87,7 +83,8 @@ enum editorKey {
     ALT_ARROW_UP,
     ALT_ARROW_DOWN,
     MOUSE_SCROLL_UP = 2000,
-    MOUSE_SCROLL_DOWN
+    MOUSE_SCROLL_DOWN,
+    MOUSE_LEFT_CLICK
 };
 
 enum environment {
@@ -137,6 +134,8 @@ typedef struct {
     int match_bracket_y;
     int has_match_bracket;
     int env;
+    int clicked_x;
+    int clicked_y;
 } editorConfig;
 
 typedef struct {
@@ -386,7 +385,12 @@ int editorReadKey() {
 
                 int b, x, y;
                 if (sscanf(&seq[2], "%d;%d;%d", &b, &x, &y) == 3) {
-                    if (b == 64) return MOUSE_SCROLL_UP;
+                    if (b == 0 && seq[i] == 'M') {
+                        E.clicked_x = x - 1 + E.col_offset;
+                        E.clicked_y = y - 1 + E.row_offset;
+                        return MOUSE_LEFT_CLICK;
+                    }
+                    else if (b == 64) return MOUSE_SCROLL_UP;
                     else if (b == 65) return MOUSE_SCROLL_DOWN;
                 }
                 return ESCAPE_CHAR;
@@ -739,9 +743,22 @@ void editorProcessKeypress() {
 
         case MOUSE_SCROLL_UP:
             editorScrollPageUp(1);
+            updateMatchBracket();
             break;
         case MOUSE_SCROLL_DOWN:
             editorScrollPageDown(1);
+            updateMatchBracket();
+            break;
+
+        case MOUSE_LEFT_CLICK:
+            if (E.clicked_x >= 0 && E.clicked_y < E.num_rows) {
+                E.cursor_y = E.clicked_y;
+                int row_len = E.row[E.clicked_y].size;
+                if (E.clicked_x > row_len) E.clicked_x = row_len;
+                E.cursor_x = E.clicked_x;
+                E.preferred_x = E.cursor_x;
+            }
+            updateMatchBracket();
             break;
 
         case ESCAPE_CHAR:
@@ -1196,6 +1213,8 @@ void editorInit() {
     E.match_bracket_y = 0;
     E.has_match_bracket = 0;
     E.env = getEnv();
+    E.clicked_x = 0;
+    E.clicked_y = 0;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
