@@ -17,6 +17,7 @@ This README file has been completely written using Cypher.
   - Page Up/Page Down for fast scrolling.
   - `Ctrl-ArrowKeys` for fast navigation.
   - `Ctrl-G` to jump to a specific line.
+  - Mouse Scroll Wheel to scroll viewport up / down.
 
 - **Editing Operations**
   - Insert text anywhere.

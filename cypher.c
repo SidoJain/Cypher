@@ -54,6 +54,8 @@
 #define YELLOW_FG_COLOR         "\x1b[33m"
 #define DARK_GRAY_BG_COLOR      "\x1b[48;5;238m"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;5;242m"
+#define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1006h"
+#define DISABLE_MOUSE           "\x1b[?1000l\x1b[?1006l"
 
 /*** Structs and Enums ***/
 
@@ -83,7 +85,9 @@ enum editorKey {
     PAGE_UP,
     PAGE_DOWN,
     ALT_ARROW_UP,
-    ALT_ARROW_DOWN
+    ALT_ARROW_DOWN,
+    MOUSE_SCROLL_UP = 2000,
+    MOUSE_SCROLL_DOWN
 };
 
 enum environment {
@@ -347,12 +351,14 @@ void enableRawMode() {
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
 
+    write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
 void disableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
         die("tcsetattr");
+    write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
 }
 
 int editorReadKey() {
@@ -363,12 +369,28 @@ int editorReadKey() {
             die("read");
 
     if (c == ESCAPE_CHAR) {
-        char seq[5] = {0};
+        char seq[32] = {0};
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return ESCAPE_CHAR;
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return ESCAPE_CHAR;
 
         if (seq[0] == '[') {
-            if (seq[1] >= '0' && seq[1] <= '9') {
+            if (seq[1] == '<') {
+                int i = 2;
+                while (1) {
+                    if (read(STDIN_FILENO, &seq[i], 1) != 1) return ESCAPE_CHAR;
+                    if (seq[i] == 'm' || seq[i] == 'M') break;
+                    i++;
+                    if (i >= (int)sizeof(seq) - 1) return ESCAPE_CHAR;
+                }
+                seq[i + 1] = '\0';
+
+                int b, x, y;
+                if (sscanf(&seq[2], "%d;%d;%d", &b, &x, &y) == 3) {
+                    if (b == 64) return MOUSE_SCROLL_UP;
+                    else if (b == 65) return MOUSE_SCROLL_DOWN;
+                }
+                return ESCAPE_CHAR;
+            } else if (seq[1] >= '0' && seq[1] <= '9') {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return ESCAPE_CHAR;
                 if (seq[2] == ';') {
                     if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
@@ -424,6 +446,18 @@ int editorReadKey() {
                     case 'D': return ARROW_LEFT;
                     case 'H': return HOME_KEY;
                     case 'F': return END_KEY;
+                    case 'M': {
+                        char cb, cx, cy;
+                        if (read(STDIN_FILENO, &cb, 1) != 1) return ESCAPE_CHAR;
+                        if (read(STDIN_FILENO, &cx, 1) != 1) return ESCAPE_CHAR;
+                        if (read(STDIN_FILENO, &cy, 1) != 1) return ESCAPE_CHAR;
+
+                        int button = cb - 32;
+                        if (button == 64) return MOUSE_SCROLL_UP;
+                        else if (button == 65) return MOUSE_SCROLL_DOWN;
+
+                        return ESCAPE_CHAR;
+                    }
                 }
             }
         } else if (seq[0] == 'O') {
@@ -701,6 +735,13 @@ void editorProcessKeypress() {
         case ALT_ARROW_DOWN:
             saveEditorStateForUndo();
             editorMoveRowDown();
+            break;
+
+        case MOUSE_SCROLL_UP:
+            editorScrollPageUp(1);
+            break;
+        case MOUSE_SCROLL_DOWN:
+            editorScrollPageDown(1);
             break;
 
         case ESCAPE_CHAR:
@@ -1108,6 +1149,7 @@ void editorManualScreen() {
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
         "  Ctrl-H               - Show manual",
+        "  Alt-Up/Down          - Move row up / down",
         "",
         "Press any key to return..."
     };
