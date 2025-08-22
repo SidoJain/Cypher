@@ -25,6 +25,7 @@ This README file has been completely written using Cypher.
   - Automatic tab expansion to spaces.
   - Paste command (`Ctrl-V`) from clipboard.
   - Copy (`Ctrl-C`) and Cut (`Ctrl-X`) commands to clipboard.
+  - Move whole rows up (`Alt-Up`) or down (`Alt-Down`).
 
 - **Search**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
@@ -56,9 +57,10 @@ This README file has been completely written using Cypher.
 | `Backspace`                           | Delete character left of cursor |
 | `Delete`                              | Delete character under cursor |
 | `Enter`                               | Insert new line |
-| `Shift + Arrow Keys / Home / End`     | Select text |
-| `Ctrl + Left / Right`                 | Skip words |
-| `Ctrl + Up / Down`                    | Scroll up / down |
+| `Shift-ArrowKeys/Home/End`            | Select text |
+| `Ctrl-Left/Right`                     | Skip words |
+| `Ctrl-Up/Down`                        | Scroll up / down |
+| `Alt-Up/Down`                         | Move row up / down |
 
 ## Installation & Compilation
 
