@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.1.3"
+#define CYPHER_VERSION      "1.1.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -751,6 +751,9 @@ void editorProcessKeypress() {
             break;
 
         case MOUSE_LEFT_CLICK:
+            if (E.select_mode)
+                E.select_mode = 0;
+
             if (E.clicked_x >= 0 && E.clicked_y < E.num_rows) {
                 E.cursor_y = E.clicked_y;
                 int row_len = E.row[E.clicked_y].size;
