@@ -50,8 +50,8 @@
 #define YELLOW_FG_COLOR         "\x1b[33m"
 #define DARK_GRAY_BG_COLOR      "\x1b[48;5;238m"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;5;242m"
-#define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1006h"
-#define DISABLE_MOUSE           "\x1b[?1000l\x1b[?1006l"
+#define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
+#define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 
 /*** Structs and Enums ***/
 
@@ -84,7 +84,9 @@ enum editorKey {
     ALT_ARROW_DOWN,
     MOUSE_SCROLL_UP = 2000,
     MOUSE_SCROLL_DOWN,
-    MOUSE_LEFT_CLICK
+    MOUSE_LEFT_CLICK,
+    MOUSE_DRAG,
+    MOUSE_LEFT_RELEASE
 };
 
 enum environment {
@@ -134,8 +136,6 @@ typedef struct {
     int match_bracket_y;
     int has_match_bracket;
     int env;
-    int clicked_x;
-    int clicked_y;
 } editorConfig;
 
 typedef struct {
@@ -385,13 +385,19 @@ int editorReadKey() {
 
                 int b, x, y;
                 if (sscanf(&seq[2], "%d;%d;%d", &b, &x, &y) == 3) {
-                    if (b == 0 && seq[i] == 'M') {
-                        E.clicked_x = x - 1 + E.col_offset;
-                        E.clicked_y = y - 1 + E.row_offset;
-                        return MOUSE_LEFT_CLICK;
-                    }
-                    else if (b == 64) return MOUSE_SCROLL_UP;
+                    if (b == 64) return MOUSE_SCROLL_UP;
                     else if (b == 65) return MOUSE_SCROLL_DOWN;
+
+                    x--;
+                    y--;
+                    int motion = b & 32;
+                    if (b & 3 == 0) {
+                        E.cursor_x = x + E.col_offset;
+                        E.cursor_y = y + E.row_offset;
+                        if (!motion && seq[i] == 'M') return MOUSE_LEFT_CLICK;
+                        else if (motion && seq[i] == 'M') return MOUSE_DRAG;
+                        else if (seq[i] == 'm') return MOUSE_LEFT_RELEASE;
+                    }
                 }
                 return ESCAPE_CHAR;
             } else if (seq[1] >= '0' && seq[1] <= '9') {
@@ -751,16 +757,57 @@ void editorProcessKeypress() {
             break;
 
         case MOUSE_LEFT_CLICK:
-            if (E.select_mode)
-                E.select_mode = 0;
+            E.select_mode = 1;
 
-            if (E.clicked_x >= 0 && E.clicked_y < E.num_rows) {
-                E.cursor_y = E.clicked_y;
-                int row_len = E.row[E.clicked_y].size;
-                if (E.clicked_x > row_len) E.clicked_x = row_len;
-                E.cursor_x = E.clicked_x;
-                E.preferred_x = E.cursor_x;
+            if (E.cursor_x < 0)
+                E.cursor_x = 0;
+            else if (E.cursor_x > E.row[E.cursor_y].size)
+                E.cursor_x = E.row[E.cursor_y].size;
+            if (E.cursor_y < 0)
+                E.cursor_y = 0;
+            else if (E.cursor_y > E.num_rows) {
+                E.cursor_x = E.row[E.num_rows - 1].size;
+                E.cursor_y = E.num_rows - 1;
             }
+            E.select_sx = E.cursor_x;
+            E.select_sy = E.cursor_y;
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            E.preferred_x = E.cursor_x;
+
+            updateMatchBracket();
+            break;
+        case MOUSE_DRAG:
+            if (E.cursor_x < 0)
+                E.cursor_x = 0;
+            else if (E.cursor_x > E.row[E.cursor_y].size)
+                E.cursor_x = E.row[E.cursor_y].size;
+            if (E.cursor_y < 0)
+                E.cursor_y = 0;
+            else if (E.cursor_y > E.num_rows) {
+                E.cursor_x = E.row[E.num_rows - 1].size;
+                E.cursor_y = E.num_rows - 1;
+            }
+            E.select_ex = E.cursor_x;
+            E.select_ey = E.cursor_y;
+            E.preferred_x = E.cursor_x;
+
+            updateMatchBracket();
+            break;
+        case MOUSE_LEFT_RELEASE:
+            if (E.cursor_x < 0)
+                E.cursor_x = 0;
+            else if (E.cursor_x > E.row[E.cursor_y].size)
+                E.cursor_x = E.row[E.cursor_y].size;
+            if (E.cursor_y < 0)
+                E.cursor_y = 0;
+            else if (E.cursor_y > E.num_rows) {
+                E.cursor_x = E.row[E.num_rows - 1].size;
+                E.cursor_y = E.num_rows - 1;
+            }
+
+            if (E.select_ex == E.select_sx && E.select_ey == E.select_sy)
+                E.select_mode = 0;
             updateMatchBracket();
             break;
 
@@ -1216,8 +1263,6 @@ void editorInit() {
     E.match_bracket_y = 0;
     E.has_match_bracket = 0;
     E.env = getEnv();
-    E.clicked_x = 0;
-    E.clicked_y = 0;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
