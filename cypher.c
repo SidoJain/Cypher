@@ -390,8 +390,8 @@ int editorReadKey() {
 
                     x--;
                     y--;
-                    int motion = b & 32;
-                    if (b & 3 == 0) {
+                    int motion = (b & 32);
+                    if ((b & 3) == 0) {
                         E.cursor_x = x + E.col_offset;
                         E.cursor_y = y + E.row_offset;
                         if (!motion && seq[i] == 'M') return MOUSE_LEFT_CLICK;
