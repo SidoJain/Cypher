@@ -136,6 +136,8 @@ typedef struct {
     int match_bracket_y;
     int has_match_bracket;
     int env;
+    int quit_times;
+    int save_times;
 } editorConfig;
 
 typedef struct {
@@ -216,6 +218,7 @@ void abFree(appendBuffer *);
 void editorOpen(const char *);
 char *editorRowsToString(int *);
 void editorSave();
+void editorQuit();
 
 // row operations
 void editorInsertRow(int, const char *, size_t);
@@ -234,6 +237,12 @@ void editorMoveRowDown();
 void editorInsertChar(int);
 void editorDeleteChar(int);
 void editorInsertNewline();
+void editorInsertTab();
+
+// select operations
+void editorSelectText(int);
+void editorSelectAll();
+char *editorGetSelectedText();
 void editorDeleteSelectedText();
 
 // find operations
@@ -242,7 +251,6 @@ void editorFindCallback(char *, int);
 
 // clipboard operations
 void clipboardCopyToSystem(const char *);
-char *editorGetSelectedText();
 void editorCopySelection();
 void editorCutSelection();
 void editorPaste();
@@ -262,6 +270,11 @@ void editorRedo();
 char getMatchingBracket(char);
 int findMatchingBracketPosition(int, int, int *, int *);
 void updateMatchBracket();
+
+// mouse operations
+void editorMouseLeftClick();
+void editorMouseDragClick();
+void editorMouseLeftRelease();
 
 /*** Main ***/
 
@@ -517,19 +530,10 @@ int getCursorPosition(int *rows, int *cols) {
 
 void editorProcessKeypress() {
     int c = editorReadKey();
-    static int quit_times = QUIT_TIMES;
 
     switch (c) {
         case CTRL_KEY('q'):     // quit
-            if (E.dirty && quit_times > 0) {
-                editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", quit_times, quit_times == 1 ? "" : "s");
-                quit_times--;
-                return;
-            }
-
-            write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
-            clearTerminal();
-            exit(0);
+            editorQuit();
             break;
 
         case CTRL_KEY('h'):     // manual
@@ -541,7 +545,6 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('f'):     // find
-            E.has_match_bracket = 0;
             editorFind();
             updateMatchBracket();
             break;
@@ -561,18 +564,7 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('a'):     // select all
-            if (E.num_rows > 0) {
-                E.select_mode = 1;
-                E.select_sx = 0;
-                E.select_sy = 0;
-                E.select_ex = E.row[E.num_rows - 1].size;
-                E.select_ey = E.num_rows - 1;
-
-                E.cursor_x = E.select_ex;
-                E.cursor_y = E.select_ey;
-
-                editorSetStatusMsg("Selected all %d lines", E.num_rows);
-            }
+            editorSelectAll();
             updateMatchBracket();
             break;
 
@@ -601,12 +593,7 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             saveEditorStateForUndo();
-            int rx = editorRowCxToRx(&E.row[E.cursor_y], E.cursor_x);
-            int spaces = TAB_SIZE - (rx % TAB_SIZE);
-            if (spaces == 0)
-                spaces = TAB_SIZE;
-            for (int i = 0; i < spaces; i++)
-                editorInsertChar(' ');
+            editorInsertTab();
             updateMatchBracket();
             break;
 
@@ -667,14 +654,7 @@ void editorProcessKeypress() {
         case SHIFT_ARROW_RIGHT:
         case SHIFT_ARROW_UP:
         case SHIFT_ARROW_DOWN:
-            if (!E.select_mode) {
-                E.select_mode = 1;
-                E.select_sx = E.cursor_x;
-                E.select_sy = E.cursor_y;
-            }
-            editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
-            E.select_ex = E.cursor_x;
-            E.select_ey = E.cursor_y;
+            editorSelectText(c);
             updateMatchBracket();
             break;
 
@@ -757,57 +737,15 @@ void editorProcessKeypress() {
             break;
 
         case MOUSE_LEFT_CLICK:
-            E.select_mode = 1;
-
-            if (E.cursor_x < 0)
-                E.cursor_x = 0;
-            else if (E.cursor_x > E.row[E.cursor_y].size)
-                E.cursor_x = E.row[E.cursor_y].size;
-            if (E.cursor_y < 0)
-                E.cursor_y = 0;
-            else if (E.cursor_y > E.num_rows) {
-                E.cursor_x = E.row[E.num_rows - 1].size;
-                E.cursor_y = E.num_rows - 1;
-            }
-            E.select_sx = E.cursor_x;
-            E.select_sy = E.cursor_y;
-            E.select_ex = E.cursor_x;
-            E.select_ey = E.cursor_y;
-            E.preferred_x = E.cursor_x;
-
+            editorMouseLeftClick();
             updateMatchBracket();
             break;
         case MOUSE_DRAG:
-            if (E.cursor_x < 0)
-                E.cursor_x = 0;
-            else if (E.cursor_x > E.row[E.cursor_y].size)
-                E.cursor_x = E.row[E.cursor_y].size;
-            if (E.cursor_y < 0)
-                E.cursor_y = 0;
-            else if (E.cursor_y > E.num_rows) {
-                E.cursor_x = E.row[E.num_rows - 1].size;
-                E.cursor_y = E.num_rows - 1;
-            }
-            E.select_ex = E.cursor_x;
-            E.select_ey = E.cursor_y;
-            E.preferred_x = E.cursor_x;
-
+            editorMouseDragClick();
             updateMatchBracket();
             break;
         case MOUSE_LEFT_RELEASE:
-            if (E.cursor_x < 0)
-                E.cursor_x = 0;
-            else if (E.cursor_x > E.row[E.cursor_y].size)
-                E.cursor_x = E.row[E.cursor_y].size;
-            if (E.cursor_y < 0)
-                E.cursor_y = 0;
-            else if (E.cursor_y > E.num_rows) {
-                E.cursor_x = E.row[E.num_rows - 1].size;
-                E.cursor_y = E.num_rows - 1;
-            }
-
-            if (E.select_ex == E.select_sx && E.select_ey == E.select_sy)
-                E.select_mode = 0;
+            editorMouseLeftRelease();
             updateMatchBracket();
             break;
 
@@ -824,8 +762,6 @@ void editorProcessKeypress() {
             updateMatchBracket();
             break;
     }
-
-    quit_times = QUIT_TIMES;
 }
 
 void editorMoveCursor(int key) {
@@ -1263,6 +1199,8 @@ void editorInit() {
     E.match_bracket_y = 0;
     E.has_match_bracket = 0;
     E.env = getEnv();
+    E.quit_times = QUIT_TIMES;
+    E.save_times = SAVE_TIMES;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -1363,9 +1301,7 @@ char *editorRowsToString(int *buf_len) {
 }
 
 void editorSave() {
-    static int save_times = SAVE_TIMES;
     static int new_file = 0;
-
     if (E.filename == NULL) {
         char *input = editorPrompt("Save as: %s (ESC to cancel)", NULL);
         if (input == NULL) {
@@ -1388,12 +1324,12 @@ void editorSave() {
         new_file = 1;
     }
 
-    if (new_file && access(E.filename, F_OK) == 0 && save_times != 0) {
-        editorSetStatusMsg("File exists! Press Ctrl-S %d more time%s to overwrite.", save_times, save_times == 1 ? "" : "s");
-        save_times--;
+    if (new_file && access(E.filename, F_OK) == 0 && E.save_times != 0) {
+        editorSetStatusMsg("File exists! Press Ctrl-S %d more time%s to overwrite.", E.save_times, E.save_times == 1 ? "" : "s");
+        E.save_times--;
         return;
     }
-    save_times = SAVE_TIMES;
+    E.save_times = SAVE_TIMES;
     new_file = 0;
 
     int len;
@@ -1401,7 +1337,7 @@ void editorSave() {
 
     int fp = open(E.filename,
                   O_RDWR |      // read and write
-                      O_CREAT,  // create if doesnt exist
+                  O_CREAT,      // create if doesn't exist
                   0644);        // permissions
     if (fp != -1) {
         if (ftruncate(fp, len) != -1) {
@@ -1410,6 +1346,7 @@ void editorSave() {
                 free(buf);
                 E.dirty = 0;
                 editorSetStatusMsg("%d bytes written to disk", len);
+                E.quit_times = QUIT_TIMES;
                 return;
             }
         }
@@ -1418,6 +1355,17 @@ void editorSave() {
 
     free(buf);
     editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
+}
+
+void editorQuit() {
+    if (E.dirty && E.quit_times > 0) {
+        editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", E.quit_times, E.quit_times == 1 ? "" : "s");
+        E.quit_times--;
+        return;
+    }
+    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
+    clearTerminal();
+    exit(0);
 }
 
 void editorInsertRow(int at, const char *str, size_t len) {
@@ -1699,6 +1647,83 @@ void editorInsertNewline() {
     E.preferred_x = E.cursor_x;
 }
 
+void editorInsertTab() {
+    int rx = editorRowCxToRx(&E.row[E.cursor_y], E.cursor_x);
+    int spaces = TAB_SIZE - (rx % TAB_SIZE);
+    if (spaces == 0)
+        spaces = TAB_SIZE;
+    for (int i = 0; i < spaces; i++)
+        editorInsertChar(' ');
+}
+
+void editorSelectText(int c) {
+    if (!E.select_mode) {
+        E.select_mode = 1;
+        E.select_sx = E.cursor_x;
+        E.select_sy = E.cursor_y;
+    }
+    editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
+    E.select_ex = E.cursor_x;
+    E.select_ey = E.cursor_y;
+}
+
+void editorSelectAll() {
+    if (E.num_rows > 0) {
+        E.select_mode = 1;
+        E.select_sx = 0;
+        E.select_sy = 0;
+        E.select_ex = E.row[E.num_rows - 1].size;
+        E.select_ey = E.num_rows - 1;
+
+        E.cursor_x = E.select_ex;
+        E.cursor_y = E.select_ey;
+
+        editorSetStatusMsg("Selected all %d lines", E.num_rows);
+    }
+}
+
+char *editorGetSelectedText() {
+    if (!E.select_mode) return NULL;
+
+    int x1 = E.select_sx, y1 = E.select_sy;
+    int x2 = E.select_ex, y2 = E.select_ey;
+    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+        int tmpx = x1, tmpy = y1;
+        x1 = x2;
+        y1 = y2;
+        x2 = tmpx;
+        y2 = tmpy;
+    }
+
+    size_t total = 0;
+    for (int row = y1; row <= y2; row++) {
+        int startx = (row == y1) ? x1 : 0;
+        int endx = (row == y2) ? x2 : E.row[row].size;
+        if (endx > startx)
+            total += (endx - startx);
+        if (row != y2)
+            total++;
+    }
+
+    char *buf = malloc(total + 1);
+    if (!buf)
+        die("malloc");
+
+    char *ptr = buf;
+    for (int row = y1; row <= y2; row++) {
+        int startx = (row == y1) ? x1 : 0;
+        int endx = (row == y2) ? x2 : E.row[row].size;
+        if (endx > startx) {
+            memcpy(ptr, &E.row[row].chars[startx], endx - startx);
+            ptr += (endx - startx);
+        }
+        if (row != y2)
+            *ptr++ = '\n';
+    }
+    *ptr = '\0';
+    return buf;
+}
+
 void editorDeleteSelectedText() {
     if (!E.select_mode)
         return;
@@ -1744,6 +1769,7 @@ void editorDeleteSelectedText() {
 }
 
 void editorFind() {
+    E.has_match_bracket = 0;
     int saved_cursor_x = E.cursor_x;
     int saved_cursor_y = E.cursor_y;
     int saved_col_offset = E.col_offset;
@@ -1890,48 +1916,6 @@ void clipboardCopyToSystem(const char *data) {
     } else {
         editorSetStatusMsg("Unable to copy to system clipboard");
     }
-}
-
-char *editorGetSelectedText() {
-    if (!E.select_mode) return NULL;
-
-    int x1 = E.select_sx, y1 = E.select_sy;
-    int x2 = E.select_ex, y2 = E.select_ey;
-    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
-        int tmpx = x1, tmpy = y1;
-        x1 = x2;
-        y1 = y2;
-        x2 = tmpx;
-        y2 = tmpy;
-    }
-
-    size_t total = 0;
-    for (int row = y1; row <= y2; row++) {
-        int startx = (row == y1) ? x1 : 0;
-        int endx = (row == y2) ? x2 : E.row[row].size;
-        if (endx > startx)
-            total += (endx - startx);
-        if (row != y2)
-            total++;
-    }
-
-    char *buf = malloc(total + 1);
-    if (!buf)
-        die("malloc");
-
-    char *ptr = buf;
-    for (int row = y1; row <= y2; row++) {
-        int startx = (row == y1) ? x1 : 0;
-        int endx = (row == y2) ? x2 : E.row[row].size;
-        if (endx > startx) {
-            memcpy(ptr, &E.row[row].chars[startx], endx - startx);
-            ptr += (endx - startx);
-        }
-        if (row != y2)
-            *ptr++ = '\n';
-    }
-    *ptr = '\0';
-    return buf;
 }
 
 void editorCopySelection() {
@@ -2289,4 +2273,56 @@ void updateMatchBracket() {
     } else {
         E.has_match_bracket = 0;
     }
+}
+
+void editorMouseLeftClick() {
+    E.select_mode = 1;
+
+    if (E.cursor_x < 0)
+        E.cursor_x = 0;
+    else if (E.cursor_x > E.row[E.cursor_y].size)
+        E.cursor_x = E.row[E.cursor_y].size;
+    if (E.cursor_y < 0)
+        E.cursor_y = 0;
+    else if (E.cursor_y > E.num_rows) {
+        E.cursor_x = E.row[E.num_rows - 1].size;
+        E.cursor_y = E.num_rows - 1;
+    }
+    E.select_sx = E.cursor_x;
+    E.select_sy = E.cursor_y;
+    E.select_ex = E.cursor_x;
+    E.select_ey = E.cursor_y;
+    E.preferred_x = E.cursor_x;
+}
+
+void editorMouseDragClick() {
+    if (E.cursor_x < 0)
+        E.cursor_x = 0;
+    else if (E.cursor_x > E.row[E.cursor_y].size)
+        E.cursor_x = E.row[E.cursor_y].size;
+    if (E.cursor_y < 0)
+        E.cursor_y = 0;
+    else if (E.cursor_y > E.num_rows) {
+        E.cursor_x = E.row[E.num_rows - 1].size;
+        E.cursor_y = E.num_rows - 1;
+    }
+    E.select_ex = E.cursor_x;
+    E.select_ey = E.cursor_y;
+    E.preferred_x = E.cursor_x;
+}
+
+void editorMouseLeftRelease() {
+    if (E.cursor_x < 0)
+        E.cursor_x = 0;
+    else if (E.cursor_x > E.row[E.cursor_y].size)
+        E.cursor_x = E.row[E.cursor_y].size;
+    if (E.cursor_y < 0)
+        E.cursor_y = 0;
+    else if (E.cursor_y > E.num_rows) {
+        E.cursor_x = E.row[E.num_rows - 1].size;
+        E.cursor_y = E.num_rows - 1;
+    }
+
+    if (E.select_ex == E.select_sx && E.select_ey == E.select_sy)
+        E.select_mode = 0;
 }
