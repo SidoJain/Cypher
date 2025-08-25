@@ -158,17 +158,24 @@ typedef struct {
     int select_ey;
 } editorState;
 
+typedef struct {
+    editorState undo_stack[UNDO_REDO_STACK_SIZE];
+    int undo_top;
+    editorState redo_stack[UNDO_REDO_STACK_SIZE];
+    int redo_top;
+    long last_edit_time;
+    int undo_in_progress;
+} editorUndoRedo;
+
 /*** Global Data ***/
 
 editorConfig E;
-
-editorState undo_stack[UNDO_REDO_STACK_SIZE];
-int undo_top = -1;
-editorState redo_stack[UNDO_REDO_STACK_SIZE];
-int redo_top = -1;
-
-static long last_edit_time = 0;
-static int undo_in_progress = 0;
+editorUndoRedo history = {
+    .undo_top = -1,
+    .redo_top = -1,
+    .last_edit_time = 0,
+    .undo_in_progress = 0,
+};
 
 /*** Function Prototypes ***/
 
@@ -712,7 +719,7 @@ void editorProcessKeypress() {
         case ARROW_RIGHT:
         case ARROW_UP:
         case ARROW_DOWN:
-            undo_in_progress = 0;
+            history.undo_in_progress = 0;
             E.select_mode = 0;
             editorMoveCursor(c);
             updateMatchBracket();
@@ -2092,16 +2099,16 @@ void freeEditorState(editorState *state) {
 void saveEditorStateForUndo() {
     long now = currentMillis();
 
-    if (undo_top >= UNDO_REDO_STACK_SIZE - 1)
+    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1)
         return;
 
-    if (!undo_in_progress || (now - last_edit_time > UNDO_TIMEOUT)) {
-        for (int i = 0; i <= redo_top; i++)
-            freeEditorState(&redo_stack[i]);
-        redo_top = -1;
+    if (!history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT)) {
+        for (int i = 0; i <= history.redo_top; i++)
+            freeEditorState(&history.redo_stack[i]);
+        history.redo_top = -1;
 
-        undo_top++;
-        editorState *state = &undo_stack[undo_top];
+        history.undo_top++;
+        editorState *state = &history.undo_stack[history.undo_top];
         freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
@@ -2114,10 +2121,10 @@ void saveEditorStateForUndo() {
         state->select_ex = E.select_ex;
         state->select_ey = E.select_ey;
 
-        undo_in_progress = 1;
+        history.undo_in_progress = 1;
     }
 
-    last_edit_time = now;
+    history.last_edit_time = now;
 }
 
 void restoreEditorState(const editorState *state) {
@@ -2143,19 +2150,18 @@ void restoreEditorState(const editorState *state) {
     E.select_sy = state->select_sy;
     E.select_ex = state->select_ex;
     E.select_ey = state->select_ey;
-
     E.dirty++;
 }
 
 void editorUndo() {
-    if (undo_top < 0) {
+    if (history.undo_top < 0) {
         editorSetStatusMsg("Nothing to undo");
         return;
     }
 
-    if (redo_top < UNDO_REDO_STACK_SIZE - 1) {
-        redo_top++;
-        editorState *state = &redo_stack[redo_top];
+    if (history.redo_top < UNDO_REDO_STACK_SIZE - 1) {
+        history.redo_top++;
+        editorState *state = &history.redo_stack[history.redo_top];
 
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
@@ -2168,23 +2174,22 @@ void editorUndo() {
         state->select_ey = E.select_ey;
     }
 
-    editorState *undo_st = &undo_stack[undo_top];
+    editorState *undo_st = &history.undo_stack[history.undo_top];
     restoreEditorState(undo_st);
-
     freeEditorState(undo_st);
-    undo_top--;
+    history.undo_top--;
     editorSetStatusMsg("Undo");
 }
 
 void editorRedo() {
-    if (redo_top < 0) {
+    if (history.redo_top < 0) {
         editorSetStatusMsg("Nothing to redo");
         return;
     }
 
-    if (undo_top < UNDO_REDO_STACK_SIZE - 1) {
-        undo_top++;
-        editorState *state = &undo_stack[undo_top];
+    if (history.undo_top < UNDO_REDO_STACK_SIZE - 1) {
+        history.undo_top++;
+        editorState *state = &history.undo_stack[history.undo_top];
 
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
@@ -2197,11 +2202,10 @@ void editorRedo() {
         state->select_ey = E.select_ey;
     }
 
-    editorState *redo_st = &redo_stack[redo_top];
+    editorState *redo_st = &history.redo_stack[history.redo_top];
     restoreEditorState(redo_st);
-
     freeEditorState(redo_st);
-    redo_top--;
+    history.redo_top--;
     editorSetStatusMsg("Redo");
 }
 
