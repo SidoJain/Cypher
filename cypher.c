@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.1.5"
+#define CYPHER_VERSION      "1.1.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -252,9 +252,15 @@ void editorSelectAll();
 char *editorGetSelectedText();
 void editorDeleteSelectedText();
 
-// find operations
+// find-replace operations
 void editorFind();
 void editorFindCallback(char *, int);
+void editorScanLineMatches(int, const char *);
+void editorReplace();
+void editorReplaceCallback(char *, int);
+int editorReplaceAll(const char *);
+void editorReplaceJumpToCurrent();
+int editorReplaceCurrent(const char *, const char *);
 
 // clipboard operations
 void clipboardCopyToSystem(const char *);
@@ -554,6 +560,10 @@ void editorProcessKeypress() {
         case CTRL_KEY('f'):     // find
             editorFind();
             updateMatchBracket();
+            break;
+
+        case CTRL_KEY('r'):     // replace
+            editorReplace();
             break;
 
         case CTRL_KEY('c'):     // copy
@@ -1151,6 +1161,7 @@ void editorManualScreen() {
         "  Ctrl-S               - Save",
         "  Ctrl-Q               - Quit",
         "  Ctrl-F               - Find",
+        "  Ctrl-R               - Find & Replace",
         "  Ctrl-G / L           - Jump to line",
         "  Ctrl-A               - Select all",
         "  Ctrl-Z               - Undo last major change",
@@ -1832,18 +1843,18 @@ void editorFindCallback(char *query, int key) {
 
         for (int i = 0; i < E.num_rows; i++) {
             char *line = E.row[i].render;
-            char *p = line;
-            while ((p = strstr(p, query)) != NULL) {
+            char *ptr = line;
+            while ((ptr = strstr(ptr, query)) != NULL) {
                 E.find_match_lines = realloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
                 E.find_match_cols = realloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
                 if (!E.find_match_lines || !E.find_match_cols)
                     die("realloc");
 
                 E.find_match_lines[E.find_num_matches] = i;
-                E.find_match_cols[E.find_num_matches] = p - line;
+                E.find_match_cols[E.find_num_matches] = ptr - line;
                 E.find_num_matches++;
 
-                p += strlen(query);
+                ptr += strlen(query);
             }
         }
 
@@ -1896,6 +1907,306 @@ void editorFindCallback(char *query, int key) {
             if (E.col_offset < 0) E.col_offset = 0;
         }
     }
+}
+
+void editorScanLineMatches(int line, const char *query) {
+    int new_num_matches = 0;
+
+    int max_matches = E.find_num_matches + 50;
+    int *new_lines = malloc(sizeof(int) * max_matches);
+    int *new_cols = malloc(sizeof(int) * max_matches);
+    if (!new_lines || !new_cols)
+        die("malloc");
+
+    for (int i = 0; i < E.find_num_matches; i++) {
+        if (E.find_match_lines[i] != line) {
+            new_lines[new_num_matches] = E.find_match_lines[i];
+            new_cols[new_num_matches] = E.find_match_cols[i];
+            new_num_matches++;
+        }
+    }
+
+    if (line < E.num_rows) {
+        char *render_line = E.row[line].render;
+        int query_len = strlen(query);
+        char *ptr = render_line;
+        while ((ptr = strstr(ptr, query)) != NULL) {
+            new_lines[new_num_matches] = line;
+            new_cols[new_num_matches] = ptr - render_line;
+            new_num_matches++;
+            ptr += query_len;
+        }
+    }
+
+    free(E.find_match_lines);
+    free(E.find_match_cols);
+    E.find_match_lines = new_lines;
+    E.find_match_cols = new_cols;
+    E.find_num_matches = new_num_matches;
+}
+
+void editorReplace() {
+    int saved_cursor_x = E.cursor_x;
+    int saved_cursor_y = E.cursor_y;
+    int saved_col_offset = E.col_offset;
+    int saved_row_offset = E.row_offset;
+
+    char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback);
+    if (!find_query || strlen(find_query) == 0 || E.find_num_matches == 0) {
+        editorSetStatusMsg("Replace cancelled or no matches");
+        E.cursor_x = saved_cursor_x;
+        E.cursor_y = saved_cursor_y;
+        E.col_offset = saved_col_offset;
+        E.row_offset = saved_row_offset;
+        E.find_active = 0;
+        free(find_query);
+        return;
+    }
+
+    char *replace_query = editorPrompt("Replace - With: %s (ESC to cancel)", NULL);
+    if (!replace_query) {
+        editorSetStatusMsg("Replace cancelled");
+        free(find_query);
+        free(replace_query);
+        free(E.find_query);
+        free(E.find_match_lines);
+        free(E.find_match_cols);
+        E.find_query = NULL;
+        E.find_match_lines = NULL;
+        E.find_match_cols = NULL;
+        E.find_num_matches = 0;
+        E.find_current_idx = -1;
+        E.find_active = 0;
+        return;
+    }
+
+    int first = 1;
+    int replaced = 0;
+    int done = 0;
+    int idx = E.find_current_idx < 0 ? 0 : E.find_current_idx;
+    while (!done && E.find_num_matches > 0) {
+        editorReplaceJumpToCurrent();
+        editorRefreshScreen();
+        editorSetStatusMsg("Arrows: navigate, Enter: replace, a: all, ESC: cancel");
+        editorRefreshScreen();
+
+        int key = editorReadKey();
+        switch (key) {
+            case ESCAPE_CHAR:
+                done = 1;
+                break;
+            case ARROW_DOWN:
+            case ARROW_RIGHT:
+                idx = (idx + 1) % E.find_num_matches;
+                E.find_current_idx = idx;
+                editorReplaceJumpToCurrent();
+                break;
+            case ARROW_UP:
+            case ARROW_LEFT:
+                idx = (idx - 1 + E.find_num_matches) % E.find_num_matches;
+                E.find_current_idx = idx;
+                editorReplaceJumpToCurrent();
+                break;
+            case 'a':
+            case 'A':
+                if (first) {
+                    saveEditorStateForUndo();
+                    first = 0;
+                }
+                replaced += editorReplaceAll(replace_query);
+                done = 1;
+                break;
+            case '\r':
+            case '\n':
+                if (first) {
+                    saveEditorStateForUndo();
+                    first = 0;
+                }
+                if (editorReplaceCurrent(find_query, replace_query)) {
+                    editorScanLineMatches(E.cursor_y, find_query);
+                    if (E.find_num_matches == 0) {
+                        done = 1;
+                    } else {
+                        int line = E.cursor_y;
+                        int next_idx = -1;
+                        int cursor_pos = E.cursor_x;
+                        for (int i = 0; i < E.find_num_matches; i++) {
+                            if (E.find_match_lines[i] == line && E.find_match_cols[i] > cursor_pos) {
+                                next_idx = i;
+                                break;
+                            }
+                        }
+                        if (next_idx == -1) {
+                            for (int i = 0; i < E.find_num_matches; i++) {
+                                if (E.find_match_lines[i] > line) {
+                                    next_idx = i;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (next_idx == -1)
+                            next_idx = 0;
+                        E.find_current_idx = next_idx;
+                        editorReplaceJumpToCurrent();
+                    }
+                }
+                editorReplaceCallback(find_query, 0);
+                break;
+            default:
+                break;
+        }
+        editorSetStatusMsg("Replaced %d occurrence%s", replaced, replaced == 1 ? "" : "s");
+    }
+
+    free(replace_query);
+    free(find_query);
+    free(E.find_query);
+    free(E.find_match_lines);
+    free(E.find_match_cols);
+    E.find_query = NULL;
+    E.find_match_lines = NULL;
+    E.find_match_cols = NULL;
+    E.find_num_matches = 0;
+    E.find_current_idx = -1;
+    E.find_active = 0;
+}
+
+void editorReplaceCallback(char *query, int key) {
+    (void)key;
+    if (query == NULL || !query[0]) {
+        E.find_active = 0;
+        free(E.find_query);
+        E.find_query = NULL;
+        free(E.find_match_lines);
+        E.find_match_lines = NULL;
+        free(E.find_match_cols);
+        E.find_match_cols = NULL;
+        E.find_num_matches = 0;
+        E.find_current_idx = -1;
+        return;
+    }
+
+    if (E.find_query == NULL || strcmp(E.find_query, query) != 0) {
+        free(E.find_query);
+        E.find_query = strdup(query);
+        if (!E.find_query)
+            die("strdup");
+
+        free(E.find_match_lines);
+        free(E.find_match_cols);
+        E.find_match_lines = NULL;
+        E.find_match_cols = NULL;
+        E.find_num_matches = 0;
+        E.find_current_idx = -1;
+
+        int query_len = strlen(query);
+        for (int i = 0; i < E.num_rows; i++) {
+            char *line = E.row[i].render;
+            char *ptr = line;
+            while ((ptr = strstr(ptr, query)) != NULL) {
+                E.find_match_lines = realloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
+                E.find_match_cols = realloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
+                if (!E.find_match_lines || !E.find_match_cols)
+                    die("realloc");
+                E.find_match_lines[E.find_num_matches] = i;
+                E.find_match_cols[E.find_num_matches] = ptr - line;
+                E.find_num_matches++;
+                ptr += query_len;
+            }
+        }
+
+        if (E.find_num_matches > 0) {
+            E.find_current_idx = 0;
+            int row = E.find_match_lines[0];
+            int col = E.find_match_cols[0];
+            E.cursor_y = row;
+            E.cursor_x = editorRowRxToCx(&E.row[row], col);
+            E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + 3 : 0;
+            int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
+            int margin = query_len + 3;
+            E.col_offset = (render_pos > margin) ? render_pos - (E.screen_cols - margin) : 0;
+            if (E.col_offset < 0)
+                E.col_offset = 0;
+        }
+        E.find_active = 1;
+    }
+}
+
+int editorReplaceAll(const char *replace_str) {
+    char *find_str = E.find_query;
+    int find_len = strlen(find_str);
+    int replace_len = strlen(replace_str);
+    int replaced_count = 0;
+
+    for (int i = 0; i < E.num_rows; i++) {
+        editorRow *row = &E.row[i];
+
+        int j = 0;
+        while (j <= row->size - find_len) {
+            if (strncmp(&row->chars[j], find_str, find_len) == 0) {
+                int new_size = row->size - find_len + replace_len;
+                char *new_chars = realloc(row->chars, new_size + 1);
+                if (!new_chars) die("realloc");
+                row->chars = new_chars;
+                memmove(&row->chars[j + replace_len], &row->chars[j + find_len], row->size - (j + find_len) + 1);
+                memcpy(&row->chars[j], replace_str, replace_len);
+                row->size = new_size;
+                row->chars[row->size] = '\0';
+
+                editorUpdateRow(row);
+                replaced_count++;
+                j += replace_len;
+            } else {
+                j++;
+            }
+        }
+    }
+    return replaced_count;
+}
+
+void editorReplaceJumpToCurrent() {
+    if (E.find_num_matches > 0 && E.find_current_idx >= 0 && E.find_current_idx < E.find_num_matches) {
+        int row = E.find_match_lines[E.find_current_idx];
+        int col = E.find_match_cols[E.find_current_idx];
+        E.cursor_y = row;
+        E.cursor_x = editorRowRxToCx(&E.row[row], col);
+        E.preferred_x = E.cursor_x;
+        E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + 3 : 0;
+        int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
+        int margin = strlen(E.find_query) + 3;
+        E.col_offset = (render_pos > margin) ? render_pos - (E.screen_cols - margin) : 0;
+        if (E.col_offset < 0)
+            E.col_offset = 0;
+    }
+}
+
+int editorReplaceCurrent(const char *find_str, const char *replace_str) {
+    if (!find_str || !replace_str || E.find_num_matches == 0 || E.find_current_idx < 0) return 0;
+
+    int row = E.find_match_lines[E.find_current_idx];
+    int col = E.find_match_cols[E.find_current_idx];
+    editorRow *er = &E.row[row];
+    int find_len = strlen(find_str);
+    int replace_len = strlen(replace_str);
+
+    int cx = editorRowRxToCx(er, col);
+    if (find_len != replace_len) {
+        er->chars = realloc(er->chars, er->size + replace_len - find_len + 1);
+        if (!er->chars)
+            die("realloc");
+        memmove(&er->chars[cx + replace_len], &er->chars[cx + find_len], er->size - (cx + find_len) + 1);
+        er->size = er->size + replace_len - find_len;
+        er->chars[er->size] = '\0';
+    }
+    memcpy(&er->chars[cx], replace_str, replace_len);
+
+    editorUpdateRow(er);
+    E.dirty++;
+    E.cursor_y = row;
+    E.cursor_x = cx + replace_len;
+    E.preferred_x = E.cursor_x;
+    return 1;
 }
 
 void clipboardCopyToSystem(const char *data) {

@@ -32,9 +32,10 @@ This README file has been completely written using Cypher.
   - Copy (`Ctrl-C`) and Cut (`Ctrl-X`) commands to clipboard.
   - Move whole rows up (`Alt-Up`) or down (`Alt-Down`).
 
-- **Search**
+- **Search & Replace**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
   - Works with pre-selected text well.
+  - Replace (`Ctrl-R`) functionality with interactive mode as well as replace all mode.
 
 - **Status & Message Bars**
   - Displays filename, total lines and cursor line.
@@ -47,6 +48,7 @@ This README file has been completely written using Cypher.
 | `Ctrl-Q`                              | Quit editor |
 | `Ctrl-S`                              | Save current file |
 | `Ctrl-F`                              | Search in file |
+| `Ctrl-R`                              | Find and replace |
 | `Ctrl-A`                              | Select all |
 | `Ctrl-H`                              | Open keybinds manual |
 | `Ctrl-C`                              | Copy selected text |
