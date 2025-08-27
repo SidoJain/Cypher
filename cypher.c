@@ -73,8 +73,6 @@ enum editorKey {
     CTRL_ARROW_DOWN,
     CTRL_SHIFT_ARROW_LEFT,
     CTRL_SHIFT_ARROW_RIGHT,
-    CTRL_SHIFT_ARROW_UP,
-    CTRL_SHIFT_ARROW_DOWN,
     DEL_KEY,
     HOME_KEY,
     END_KEY,
@@ -433,8 +431,6 @@ int editorReadKey() {
                     if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
                     if (seq[3] == '6') {
                         switch (seq[4]) {
-                            case 'A': return CTRL_SHIFT_ARROW_UP;
-                            case 'B': return CTRL_SHIFT_ARROW_DOWN;
                             case 'C': return CTRL_SHIFT_ARROW_RIGHT;
                             case 'D': return CTRL_SHIFT_ARROW_LEFT;
                         }
@@ -696,9 +692,6 @@ void editorProcessKeypress() {
             E.select_ex = E.cursor_x;
             E.select_ey = E.cursor_y;
             updateMatchBracket();
-            break;
-        case CTRL_SHIFT_ARROW_UP:
-        case CTRL_SHIFT_ARROW_DOWN:
             break;
 
         case SHIFT_HOME:
@@ -1810,6 +1803,8 @@ void editorFindCallback(char *query, int key) {
     int direction = 1;
 
     if (key == '\r' || key == ESCAPE_CHAR || query[0] == '\0') {
+        if (key == ESCAPE_CHAR)
+            editorSetStatusMsg("Find cancelled");
         E.find_active = 0;
         free(E.find_query);
         E.find_query = NULL;
@@ -1953,7 +1948,7 @@ void editorReplace() {
 
     char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback);
     if (!find_query || strlen(find_query) == 0 || E.find_num_matches == 0) {
-        editorSetStatusMsg("Replace cancelled or no matches");
+        editorSetStatusMsg("Replace cancelled");
         E.cursor_x = saved_cursor_x;
         E.cursor_y = saved_cursor_y;
         E.col_offset = saved_col_offset;
