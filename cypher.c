@@ -1982,7 +1982,7 @@ void editorReplace() {
     while (!done && E.find_num_matches > 0) {
         editorReplaceJumpToCurrent();
         editorRefreshScreen();
-        editorSetStatusMsg("Arrows: navigate, Enter: replace, a: all, ESC: cancel");
+        editorSetStatusMsg("Arrows: navigate, Enter: replace, A: all, ESC: cancel");
         editorRefreshScreen();
 
         int key = editorReadKey();
