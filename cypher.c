@@ -2018,6 +2018,7 @@ void editorReplace() {
                     first = 0;
                 }
                 if (editorReplaceCurrent(find_query, replace_query)) {
+                    replaced++;
                     editorScanLineMatches(E.cursor_y, find_query);
                     if (E.find_num_matches == 0) {
                         done = 1;
