@@ -242,7 +242,6 @@ void editorMoveRowDown();
 void editorInsertChar(int);
 void editorDeleteChar(int);
 void editorInsertNewline();
-void editorInsertTab();
 
 // select operations
 void editorSelectText(int);
@@ -606,7 +605,7 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             saveEditorStateForUndo();
-            editorInsertTab();
+            editorInsertChar('\t');
             updateMatchBracket();
             break;
 
@@ -1656,15 +1655,6 @@ void editorInsertNewline() {
     E.cursor_y++;
     E.cursor_x = indent_len;
     E.preferred_x = E.cursor_x;
-}
-
-void editorInsertTab() {
-    int rx = editorRowCxToRx(&E.row[E.cursor_y], E.cursor_x);
-    int spaces = TAB_SIZE - (rx % TAB_SIZE);
-    if (spaces == 0)
-        spaces = TAB_SIZE;
-    for (int i = 0; i < spaces; i++)
-        editorInsertChar(' ');
 }
 
 void editorSelectText(int c) {
