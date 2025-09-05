@@ -195,7 +195,7 @@ int getCursorPosition(int *, int *);
 // input
 void editorProcessKeypress();
 void editorMoveCursor(int);
-char *editorPrompt(const char *, void (*)(char *, int));
+char *editorPrompt(const char *, void (*)(char *, int), char *);
 void editorMoveWordLeft();
 void editorMoveWordRight();
 void editorScrollPageUp(int);
@@ -819,7 +819,7 @@ void editorMoveCursor(int key) {
         E.cursor_x = row_len;
 }
 
-char *editorPrompt(const char *prompt, void (*callback)(char *, int)) {
+char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *initial) {
     size_t buf_size = BUFFER_SIZE;
     char *buf = malloc(buf_size);
     if (!buf)
@@ -828,7 +828,6 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int)) {
     size_t buf_len = 0;
     buf[0] = '\0';
 
-    char *initial = editorGetSelectedText();
     if (initial) {
         buf_len = strlen(initial);
         if (buf_len >= buf_size) {
@@ -1313,7 +1312,7 @@ char *editorRowsToString(int *buf_len) {
 void editorSave() {
     static int new_file = 0;
     if (E.filename == NULL) {
-        char *input = editorPrompt("Save as: %s (ESC to cancel)", NULL);
+        char *input = editorPrompt("Save as: %s (ESC to cancel)", NULL, NULL);
         if (input == NULL) {
             editorSetStatusMsg("Save aborted");
             return;
@@ -1776,7 +1775,7 @@ void editorFind() {
     int saved_col_offset = E.col_offset;
     int saved_row_offset = E.row_offset;
 
-    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback);
+    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback, editorGetSelectedText());
 
     if (query) free(query);
     else {
@@ -1936,7 +1935,7 @@ void editorReplace() {
     int saved_col_offset = E.col_offset;
     int saved_row_offset = E.row_offset;
 
-    char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback);
+    char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback, editorGetSelectedText());
     if (!find_query || strlen(find_query) == 0 || E.find_num_matches == 0) {
         editorSetStatusMsg("Replace cancelled");
         E.cursor_x = saved_cursor_x;
@@ -1948,7 +1947,7 @@ void editorReplace() {
         return;
     }
 
-    char *replace_query = editorPrompt("Replace - With: %s (ESC to cancel)", NULL);
+    char *replace_query = editorPrompt("Replace - With: %s (ESC to cancel)", NULL, NULL);
     if (!replace_query) {
         editorSetStatusMsg("Replace cancelled");
         free(find_query);
@@ -2349,7 +2348,7 @@ void editorJump() {
     int saved_col_offset = E.col_offset;
     int saved_row_offset = E.row_offset;
 
-    char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", editorJumpCallback);
+    char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", editorJumpCallback, NULL);
 
     if (input) {
         free(input);
