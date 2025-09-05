@@ -182,6 +182,12 @@ void clearTerminal();
 int isWordChar(int);
 long currentMillis();
 char getClosingChar(char);
+void clampCursorPosition();
+
+// memory
+void *safeMalloc(size_t);
+void *safeRealloc(void *, size_t);
+char *safeStrdup(const char *);
 
 // terminal
 int getEnv();
@@ -331,6 +337,38 @@ char getClosingChar(char c) {
         case '`':  return '`';
     }
     return 0;
+}
+
+void clampCursorPosition() {
+    if (E.cursor_x < 0)
+        E.cursor_x = 0;
+    else if (E.cursor_y < E.num_rows)
+        E.cursor_x = E.cursor_x > E.row[E.cursor_y].size ? E.row[E.cursor_y].size : E.cursor_x;
+
+    if (E.cursor_y < 0)
+        E.cursor_y = 0;
+    else if (E.cursor_y >= E.num_rows) {
+        E.cursor_y = E.num_rows - 1;
+        E.cursor_x = E.row[E.cursor_y].size;
+    }
+}
+
+void *safeMalloc(size_t size) {
+    void* ptr = malloc(size);
+    if (!ptr) die("malloc");
+    return ptr;
+}
+
+void *safeRealloc(void *ptr, size_t size) {
+    ptr = realloc(ptr, size);
+    if (!ptr) die("realloc");
+    return ptr;
+}
+
+char *safeStrdup(const char *str) {
+    char *ptr = strdup(str);
+    if (!ptr) die("strdup");
+    return ptr;
 }
 
 int getEnv() {
@@ -486,7 +524,6 @@ int editorReadKey() {
                         int button = cb - 32;
                         if (button == 64) return MOUSE_SCROLL_UP;
                         else if (button == 65) return MOUSE_SCROLL_DOWN;
-
                         return ESCAPE_CHAR;
                     }
                 }
@@ -521,7 +558,6 @@ int getWindowSize(int *rows, int *cols) {
 int getCursorPosition(int *rows, int *cols) {
     char buf[32];
     unsigned int i = 0;
-
     if (write(STDOUT_FILENO, QUERY_CURSOR_POSITION, sizeof(QUERY_CURSOR_POSITION) - 1) != sizeof(QUERY_CURSOR_POSITION) - 1) return -1;
 
     while (i < sizeof(buf) - 1) {
@@ -821,9 +857,7 @@ void editorMoveCursor(int key) {
 
 char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *initial) {
     size_t buf_size = BUFFER_SIZE;
-    char *buf = malloc(buf_size);
-    if (!buf)
-        die("malloc");
+    char *buf = safeMalloc(buf_size);
 
     size_t buf_len = 0;
     buf[0] = '\0';
@@ -832,8 +866,7 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *init
         buf_len = strlen(initial);
         if (buf_len >= buf_size) {
             buf_size = buf_len * 2;
-            buf = realloc(buf, buf_size);
-            if (!buf) die("realloc");
+            buf = safeRealloc(buf, buf_size);
         }
         strcpy(buf, initial);
         free(initial);
@@ -863,9 +896,7 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *init
         } else if (!iscntrl(c) && c < 128) {
             if (buf_len == buf_size - 1) {
                 buf_size *= 2;
-                buf = realloc(buf, buf_size);
-                if (!buf)
-                    die("realloc");
+                buf = safeRealloc(buf, buf_size);
             }
             buf[buf_len++] = c;
             buf[buf_len] = '\0';
@@ -1240,9 +1271,7 @@ void editorCleanup() {
 }
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
-    char *new = realloc(ab->b, ab->len + len);
-    if (!new)
-        die("realloc");
+    char *new = safeRealloc(ab->b, ab->len + len);
 
     memcpy(&new[ab->len], str, len);
     ab->b = new;
@@ -1255,9 +1284,7 @@ void abFree(appendBuffer *ab) {
 
 void editorOpen(const char *filename) {
     free(E.filename);
-    E.filename = strdup(filename);
-    if (!E.filename)
-        die("strdup");
+    E.filename = safeStrdup(filename);
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
@@ -1292,10 +1319,7 @@ char *editorRowsToString(int *buf_len) {
     }
     *buf_len = total_len;
 
-    char *buf = malloc(total_len);
-    if (!buf)
-        die("malloc");
-
+    char *buf = safeMalloc(total_len);
     char *ptr = buf;
     for (int i = 0; i < E.num_rows; i++) {
         memcpy(ptr, E.row[i].chars, E.row[i].size);
@@ -1320,9 +1344,7 @@ void editorSave() {
 
         if (strchr(input, '.') == NULL) {
             size_t len = strlen(input);
-            char *new_name = malloc(len + 5);
-            if (!new_name)
-                die("malloc");
+            char *new_name = safeMalloc(len + 5);
 
             strcpy(new_name, input);
             strcat(new_name, ".txt");
@@ -1380,15 +1402,11 @@ void editorQuit() {
 void editorInsertRow(int at, const char *str, size_t len) {
     if (at < 0 || at > E.num_rows) return;
 
-    E.row = realloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
-    if (!E.row)
-        die("realloc");
+    E.row = safeRealloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.num_rows - at));
 
     E.row[at].size = len;
-    E.row[at].chars = malloc(len + 1);
-    if (!E.row[at].chars)
-        die("malloc");
+    E.row[at].chars = safeMalloc(len + 1);
 
     memcpy(E.row[at].chars, str, len);
     E.row[at].chars[len] = '\0';
@@ -1407,9 +1425,7 @@ void editorUpdateRow(editorRow *row) {
         if (row->chars[i] == '\t')
             tabs++;
     free(row->render);
-    row->render = malloc(row->size + tabs * (TAB_SIZE - 1) + 1);
-    if (!row->render)
-        die("malloc");
+    row->render = safeMalloc(row->size + tabs * (TAB_SIZE - 1) + 1);
 
     int idx = 0;
     for (int i = 0; i < row->size; i++) {
@@ -1455,9 +1471,7 @@ void editorRowInsertChar(editorRow *row, int at, int c) {
     if (at < 0 || at > row->size)
         at = row->size;
 
-    row->chars = realloc(row->chars, row->size + 2);
-    if (!row->chars)
-        die("realloc");
+    row->chars = safeRealloc(row->chars, row->size + 2);
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
     row->size++;
     row->chars[at] = c;
@@ -1489,9 +1503,7 @@ void editorDeleteRow(int at) {
 }
 
 void editorRowAppendString(editorRow *row, const char *str, size_t len) {
-    row->chars = realloc(row->chars, row->size + len + 1);
-    if (!row->chars)
-        die("realloc");
+    row->chars = safeRealloc(row->chars, row->size + len + 1);
     memcpy(&row->chars[row->size], str, len);
     row->size += len;
     row->chars[row->size] = '\0';
@@ -1606,9 +1618,7 @@ void editorInsertNewline() {
     if (E.is_pasting)
         indent_len = 0;
 
-    char *indent_str = malloc(indent_len + 1);
-    if (!indent_str)
-        die("malloc");
+    char *indent_str = safeMalloc(indent_len + 1);
     memcpy(indent_str, row->chars, indent_len);
     indent_str[indent_len] = '\0';
 
@@ -1622,9 +1632,7 @@ void editorInsertNewline() {
         editorUpdateRow(row);
 
         editorRow *new_row = &E.row[E.cursor_y + 1];
-        new_row->chars = realloc(new_row->chars, new_row->size + indent_len + 1);
-        if (!new_row->chars)
-            die("realloc");
+        new_row->chars = safeRealloc(new_row->chars, new_row->size + indent_len + 1);
 
         memmove(new_row->chars + indent_len, new_row->chars, new_row->size + 1);
         memcpy(new_row->chars, indent_str, indent_len);
@@ -1633,9 +1641,7 @@ void editorInsertNewline() {
 
         if (E.cursor_x > 0 && (row->chars[E.cursor_x - 1] == '{' || row->chars[E.cursor_x - 1] == '[' || row->chars[E.cursor_x - 1] == '(') && new_row->size > 0 && new_row->chars[indent_len] == getClosingChar(row->chars[E.cursor_x - 1])) {
             int new_indent_len = indent_len + TAB_SIZE;
-            char *block_indent = malloc(new_indent_len + 1);
-            if (!block_indent)
-                die("malloc");
+            char *block_indent = safeMalloc(new_indent_len + 1);
             memset(block_indent, ' ', new_indent_len);
             block_indent[new_indent_len] = '\0';
             editorInsertRow(E.cursor_y + 1, block_indent, new_indent_len);
@@ -1705,10 +1711,7 @@ char *editorGetSelectedText() {
             total++;
     }
 
-    char *buf = malloc(total + 1);
-    if (!buf)
-        die("malloc");
-
+    char *buf = safeMalloc(total + 1);
     char *ptr = buf;
     for (int row = y1; row <= y2; row++) {
         int startx = (row == y1) ? x1 : 0;
@@ -1814,9 +1817,7 @@ void editorFindCallback(char *query, int key) {
 
     if (E.find_query == NULL || strcmp(E.find_query, query) != 0) {
         free(E.find_query);
-        E.find_query = strdup(query);
-        if (!E.find_query)
-            die("strdup");
+        E.find_query = safeStrdup(query);
 
         free(E.find_match_lines);
         free(E.find_match_cols);
@@ -1829,10 +1830,8 @@ void editorFindCallback(char *query, int key) {
             char *line = E.row[i].render;
             char *ptr = line;
             while ((ptr = strstr(ptr, query)) != NULL) {
-                E.find_match_lines = realloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
-                E.find_match_cols = realloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
-                if (!E.find_match_lines || !E.find_match_cols)
-                    die("realloc");
+                E.find_match_lines = safeRealloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
+                E.find_match_cols = safeRealloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
 
                 E.find_match_lines[E.find_num_matches] = i;
                 E.find_match_cols[E.find_num_matches] = ptr - line;
@@ -1897,10 +1896,8 @@ void editorScanLineMatches(int line, const char *query) {
     int new_num_matches = 0;
 
     int max_matches = E.find_num_matches + 50;
-    int *new_lines = malloc(sizeof(int) * max_matches);
-    int *new_cols = malloc(sizeof(int) * max_matches);
-    if (!new_lines || !new_cols)
-        die("malloc");
+    int *new_lines = safeMalloc(sizeof(int) * max_matches);
+    int *new_cols = safeMalloc(sizeof(int) * max_matches);
 
     for (int i = 0; i < E.find_num_matches; i++) {
         if (E.find_match_lines[i] != line) {
@@ -2074,9 +2071,7 @@ void editorReplaceCallback(char *query, int key) {
 
     if (E.find_query == NULL || strcmp(E.find_query, query) != 0) {
         free(E.find_query);
-        E.find_query = strdup(query);
-        if (!E.find_query)
-            die("strdup");
+        E.find_query = safeStrdup(query);
 
         free(E.find_match_lines);
         free(E.find_match_cols);
@@ -2090,10 +2085,8 @@ void editorReplaceCallback(char *query, int key) {
             char *line = E.row[i].render;
             char *ptr = line;
             while ((ptr = strstr(ptr, query)) != NULL) {
-                E.find_match_lines = realloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
-                E.find_match_cols = realloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
-                if (!E.find_match_lines || !E.find_match_cols)
-                    die("realloc");
+                E.find_match_lines = safeRealloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
+                E.find_match_cols = safeRealloc(E.find_match_cols, sizeof(int) * (E.find_num_matches + 1));
                 E.find_match_lines[E.find_num_matches] = i;
                 E.find_match_cols[E.find_num_matches] = ptr - line;
                 E.find_num_matches++;
@@ -2131,8 +2124,7 @@ int editorReplaceAll(const char *replace_str) {
         while (j <= row->size - find_len) {
             if (strncmp(&row->chars[j], find_str, find_len) == 0) {
                 int new_size = row->size - find_len + replace_len;
-                char *new_chars = realloc(row->chars, new_size + 1);
-                if (!new_chars) die("realloc");
+                char *new_chars = safeRealloc(row->chars, new_size + 1);
                 row->chars = new_chars;
                 memmove(&row->chars[j + replace_len], &row->chars[j + find_len], row->size - (j + find_len) + 1);
                 memcpy(&row->chars[j], replace_str, replace_len);
@@ -2177,9 +2169,7 @@ int editorReplaceCurrent(const char *find_str, const char *replace_str) {
 
     int cx = editorRowRxToCx(er, col);
     if (find_len != replace_len) {
-        er->chars = realloc(er->chars, er->size + replace_len - find_len + 1);
-        if (!er->chars)
-            die("realloc");
+        er->chars = safeRealloc(er->chars, er->size + replace_len - find_len + 1);
         memmove(&er->chars[cx + replace_len], &er->chars[cx + find_len], er->size - (cx + find_len) + 1);
         er->size = er->size + replace_len - find_len;
         er->chars[er->size] = '\0';
@@ -2283,9 +2273,7 @@ void editorPaste() {
     char chunk[PASTE_CHUNK_SIZE];
     size_t len;
     while ((len = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
-        clipboard_data = realloc(clipboard_data, buf_size + len + 1);
-        if (!clipboard_data)
-            die("realloc");
+        clipboard_data = safeRealloc(clipboard_data, buf_size + len + 1);
 
         memcpy(clipboard_data + buf_size, chunk, len);
         buf_size += len;
@@ -2576,18 +2564,8 @@ void updateMatchBracket() {
 }
 
 void editorMouseLeftClick() {
+    clampCursorPosition();
     E.select_mode = 1;
-
-    if (E.cursor_x < 0)
-        E.cursor_x = 0;
-    else if (E.cursor_x > E.row[E.cursor_y].size)
-        E.cursor_x = E.row[E.cursor_y].size;
-    if (E.cursor_y < 0)
-        E.cursor_y = 0;
-    else if (E.cursor_y > E.num_rows) {
-        E.cursor_x = E.row[E.num_rows - 1].size;
-        E.cursor_y = E.num_rows - 1;
-    }
     E.select_sx = E.cursor_x;
     E.select_sy = E.cursor_y;
     E.select_ex = E.cursor_x;
@@ -2596,33 +2574,14 @@ void editorMouseLeftClick() {
 }
 
 void editorMouseDragClick() {
-    if (E.cursor_x < 0)
-        E.cursor_x = 0;
-    else if (E.cursor_x > E.row[E.cursor_y].size)
-        E.cursor_x = E.row[E.cursor_y].size;
-    if (E.cursor_y < 0)
-        E.cursor_y = 0;
-    else if (E.cursor_y > E.num_rows) {
-        E.cursor_x = E.row[E.num_rows - 1].size;
-        E.cursor_y = E.num_rows - 1;
-    }
+    clampCursorPosition();
     E.select_ex = E.cursor_x;
     E.select_ey = E.cursor_y;
     E.preferred_x = E.cursor_x;
 }
 
 void editorMouseLeftRelease() {
-    if (E.cursor_x < 0)
-        E.cursor_x = 0;
-    else if (E.cursor_x > E.row[E.cursor_y].size)
-        E.cursor_x = E.row[E.cursor_y].size;
-    if (E.cursor_y < 0)
-        E.cursor_y = 0;
-    else if (E.cursor_y > E.num_rows) {
-        E.cursor_x = E.row[E.num_rows - 1].size;
-        E.cursor_y = E.num_rows - 1;
-    }
-
+    clampCursorPosition();
     if (E.select_ex == E.select_sx && E.select_ey == E.select_sy)
         E.select_mode = 0;
 }
