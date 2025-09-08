@@ -68,6 +68,7 @@ This README file has been completely written using Cypher.
 | `Ctrl-Left / Right`                   | Skip words |
 | `Ctrl-Up / Down`                      | Scroll up / down |
 | `Alt-Up / Down`                       | Move row up / down |
+| `Shift-Alt-Up / Down`                 | Copy row up / down |
 
 ## Installation & Compilation
 

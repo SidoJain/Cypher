@@ -80,6 +80,8 @@ enum editorKey {
     PAGE_DOWN,
     ALT_ARROW_UP,
     ALT_ARROW_DOWN,
+    ALT_SHIFT_ARROW_UP,
+    ALT_SHIFT_ARROW_DOWN,
     MOUSE_SCROLL_UP = 2000,
     MOUSE_SCROLL_DOWN,
     MOUSE_LEFT_CLICK,
@@ -243,6 +245,8 @@ void editorDeleteRow(int);
 void editorRowAppendString(editorRow *, const char *, size_t);
 void editorMoveRowUp();
 void editorMoveRowDown();
+void editorCopyRowUp();
+void editorCopyRowDown();
 
 // editor operations
 void editorInsertChar(int);
@@ -478,6 +482,12 @@ int editorReadKey() {
                             case 'B': return CTRL_ARROW_DOWN;
                             case 'C': return CTRL_ARROW_RIGHT;
                             case 'D': return CTRL_ARROW_LEFT;
+                        }
+                    }
+                    if (seq[3] == '4') {
+                        switch (seq[4]) {
+                            case 'A': return ALT_SHIFT_ARROW_UP;
+                            case 'B': return ALT_SHIFT_ARROW_DOWN;
                         }
                     }
                     if (seq[3] == '3') {
@@ -770,6 +780,15 @@ void editorProcessKeypress() {
         case ALT_ARROW_DOWN:
             saveEditorStateForUndo();
             editorMoveRowDown();
+            break;
+
+        case ALT_SHIFT_ARROW_UP:
+            saveEditorStateForUndo();
+            editorCopyRowUp();
+            break;
+        case ALT_SHIFT_ARROW_DOWN:
+            saveEditorStateForUndo();
+            editorCopyRowDown();
             break;
 
         case MOUSE_SCROLL_UP:
@@ -1193,6 +1212,7 @@ void editorManualScreen() {
         "  Ctrl-V               - Paste from clipboard",
         "  Ctrl-H               - Show manual",
         "  Alt-Up/Down          - Move row up / down",
+        "  Shift-Alt-Up/Down    - Copy row up / down",
         "",
         "Press any key to return..."
     };
@@ -1530,6 +1550,22 @@ void editorMoveRowDown() {
     E.row[E.cursor_y] = temp;
 
     E.cursor_y++;
+    E.dirty++;
+}
+
+void editorCopyRowUp() {
+    if (E.cursor_y >= E.num_rows) return;
+
+    editorRow *row = &E.row[E.cursor_y];
+    editorInsertRow(E.cursor_y, row->chars, row->size);
+    E.dirty++;
+}
+
+void editorCopyRowDown() {
+    if (E.cursor_y >= E.num_rows) return;
+
+    editorRow *row = &E.row[E.cursor_y];
+    editorInsertRow(++E.cursor_y, row->chars, row->size);
     E.dirty++;
 }
 
