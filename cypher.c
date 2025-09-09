@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.1.6"
+#define CYPHER_VERSION      "1.1.7"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -31,9 +31,11 @@
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT            1000
 #define STATUS_LENGTH           80
+#define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
 #define PASTE_CHUNK_SIZE        256
 #define STATUS_MSG_TIMEOUT_SEC  5
+#define MARGIN                  3
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -321,8 +323,8 @@ void clearTerminal() {
     system("clear");
 }
 
-int isWordChar(int c) {
-    return isalnum(c) || c == '_';
+int isWordChar(int ch) {
+    return isalnum(ch) || ch == '_';
 }
 
 long currentMillis() {
@@ -331,8 +333,8 @@ long currentMillis() {
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-char getClosingChar(char c) {
-    switch (c) {
+char getClosingChar(char ch) {
+    switch (ch) {
         case '(':  return ')';
         case '{':  return '}';
         case '[':  return ']';
@@ -433,7 +435,7 @@ int editorReadKey() {
             die("read");
 
     if (c == ESCAPE_CHAR) {
-        char seq[32] = {0};
+        char seq[SMALL_BUFFER_SIZE] = {0};
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return ESCAPE_CHAR;
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return ESCAPE_CHAR;
 
@@ -455,7 +457,7 @@ int editorReadKey() {
 
                     x--;
                     y--;
-                    int motion = (b & 32);
+                    int motion = (b & SMALL_BUFFER_SIZE);
                     if ((b & 3) == 0) {
                         E.cursor_x = x + E.col_offset;
                         E.cursor_y = y + E.row_offset;
@@ -531,7 +533,7 @@ int editorReadKey() {
                         if (read(STDIN_FILENO, &cx, 1) != 1) return ESCAPE_CHAR;
                         if (read(STDIN_FILENO, &cy, 1) != 1) return ESCAPE_CHAR;
 
-                        int button = cb - 32;
+                        int button = cb - SMALL_BUFFER_SIZE;
                         if (button == 64) return MOUSE_SCROLL_UP;
                         else if (button == 65) return MOUSE_SCROLL_DOWN;
                         return ESCAPE_CHAR;
@@ -566,7 +568,7 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 int getCursorPosition(int *rows, int *cols) {
-    char buf[32];
+    char buf[SMALL_BUFFER_SIZE];
     unsigned int i = 0;
     if (write(STDOUT_FILENO, QUERY_CURSOR_POSITION, sizeof(QUERY_CURSOR_POSITION) - 1) != sizeof(QUERY_CURSOR_POSITION) - 1) return -1;
 
@@ -583,9 +585,9 @@ int getCursorPosition(int *rows, int *cols) {
 }
 
 void editorProcessKeypress() {
-    int c = editorReadKey();
+    int ch = editorReadKey();
 
-    switch (c) {
+    switch (ch) {
         case CTRL_KEY('q'):     // quit
             editorQuit();
             break;
@@ -712,7 +714,7 @@ void editorProcessKeypress() {
         case SHIFT_ARROW_RIGHT:
         case SHIFT_ARROW_UP:
         case SHIFT_ARROW_DOWN:
-            editorSelectText(c);
+            editorSelectText(ch);
             updateMatchBracket();
             break;
 
@@ -769,7 +771,7 @@ void editorProcessKeypress() {
         case ARROW_DOWN:
             history.undo_in_progress = 0;
             E.select_mode = 0;
-            editorMoveCursor(c);
+            editorMoveCursor(ch);
             updateMatchBracket();
             break;
 
@@ -819,9 +821,9 @@ void editorProcessKeypress() {
             break;
 
         default:
-            if (!iscntrl(c)) {
+            if (!iscntrl(ch)) {
                 saveEditorStateForUndo();
-                editorInsertChar(c);
+                editorInsertChar(ch);
             }
             updateMatchBracket();
             break;
@@ -895,34 +897,34 @@ char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *init
         editorSetStatusMsg(prompt, buf);
         editorRefreshScreen();
 
-        int c = editorReadKey();
-        if (c == DEL_KEY || c == BACKSPACE) {
+        int ch = editorReadKey();
+        if (ch == DEL_KEY || ch == BACKSPACE) {
             if (buf_len != 0)
                 buf[--buf_len] = '\0';
-        } else if (c == ESCAPE_CHAR) {
+        } else if (ch == ESCAPE_CHAR) {
             editorSetStatusMsg("");
             if (callback)
-                callback(buf, c);
+                callback(buf, ch);
             free(buf);
             return NULL;
-        } else if (c == '\r') {
+        } else if (ch == '\r') {
             if (buf_len != 0) {
                 editorSetStatusMsg("");
                 if (callback)
-                    callback(buf, c);
+                    callback(buf, ch);
                 return buf;
             }
-        } else if (!iscntrl(c) && c < 128) {
+        } else if (!iscntrl(ch) && ch < 128) {
             if (buf_len == buf_size - 1) {
                 buf_size *= 2;
                 buf = safeRealloc(buf, buf_size);
             }
-            buf[buf_len++] = c;
+            buf[buf_len++] = ch;
             buf[buf_len] = '\0';
         }
 
         if (callback)
-            callback(buf, c);
+            callback(buf, ch);
     }
 }
 
@@ -987,7 +989,7 @@ void editorScrollPageDown(int scroll_amount) {
 }
 
 void editorDrawWelcomeMessage(appendBuffer *ab) {
-    char welcome[80];
+    char welcome[STATUS_LENGTH];
     int welcome_len = snprintf(welcome, sizeof(welcome), "Cypher Version %s", CYPHER_VERSION);
     if (welcome_len > E.screen_cols) welcome_len = E.screen_cols;
 
@@ -1017,7 +1019,7 @@ void editorRefreshScreen() {
     editorDrawStatusBar(&ab);
     editorDrawMsgBar(&ab);
 
-    char buf[32];
+    char buf[SMALL_BUFFER_SIZE];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursor_y - E.row_offset) + 1, (E.render_x - E.col_offset) + 1);
     abAppend(&ab, buf, strlen(buf));
     abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
@@ -1180,7 +1182,7 @@ void editorDrawMsgBar(appendBuffer *ab) {
         abAppend(ab, E.status_msg, msg_len);
 
     if (E.find_active) {
-        char buf[32];
+        char buf[SMALL_BUFFER_SIZE];
         snprintf(buf, sizeof(buf), " %d/%d", E.find_current_idx + 1, E.find_num_matches);
         int right_len = strlen(buf);
 
@@ -1487,14 +1489,14 @@ int editorRowRxToCx(const editorRow *row, int render_x) {
     return cursor_x;
 }
 
-void editorRowInsertChar(editorRow *row, int at, int c) {
+void editorRowInsertChar(editorRow *row, int at, int ch) {
     if (at < 0 || at > row->size)
         at = row->size;
 
     row->chars = safeRealloc(row->chars, row->size + 2);
     memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
     row->size++;
-    row->chars[at] = c;
+    row->chars[at] = ch;
     editorUpdateRow(row);
     E.dirty++;
 }
@@ -1569,17 +1571,17 @@ void editorCopyRowDown() {
     E.dirty++;
 }
 
-void editorInsertChar(int c) {
+void editorInsertChar(int ch) {
     if (E.select_mode) {
         saveEditorStateForUndo();
         editorDeleteSelectedText();
         E.select_mode = 0;
     }
 
-    char closing_char = getClosingChar(c);
+    char closing_char = getClosingChar(ch);
     if (E.cursor_y == E.num_rows)
         editorInsertRow(E.num_rows, "", 0);
-    editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, c);
+    editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, ch);
     E.cursor_x++;
 
     if (!E.is_pasting && closing_char && E.row[E.cursor_y].chars[E.cursor_x] != closing_char)
@@ -1698,13 +1700,13 @@ void editorInsertNewline() {
     E.preferred_x = E.cursor_x;
 }
 
-void editorSelectText(int c) {
+void editorSelectText(int ch) {
     if (!E.select_mode) {
         E.select_mode = 1;
         E.select_sx = E.cursor_x;
         E.select_sy = E.cursor_y;
     }
-    editorMoveCursor(c == SHIFT_ARROW_LEFT ? ARROW_LEFT : c == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : c == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
+    editorMoveCursor(ch == SHIFT_ARROW_LEFT ? ARROW_LEFT : ch == SHIFT_ARROW_RIGHT ? ARROW_RIGHT : ch == SHIFT_ARROW_UP ? ARROW_UP : ARROW_DOWN);
     E.select_ex = E.cursor_x;
     E.select_ey = E.cursor_y;
 }
@@ -1795,8 +1797,8 @@ void editorDeleteSelectedText() {
         editorRowAppendString(&E.row[y1], E.row[y2].chars, E.row[y2].size);
         editorDeleteRow(y2);
 
-        for (int r = y2 - 1; r > y1; r--)
-            editorDeleteRow(r);
+        for (int row = y2 - 1; row > y1; row--)
+            editorDeleteRow(row);
     }
 
     E.cursor_x = x1;
@@ -1889,10 +1891,10 @@ void editorFindCallback(char *query, int key) {
             if (row < E.row_offset)
                 E.row_offset = row;
             else if (row >= E.row_offset + E.screen_rows)
-                E.row_offset = row - E.screen_rows + 3;
+                E.row_offset = row - E.screen_rows + MARGIN;
 
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-            int margin = strlen(query) + 3;
+            int margin = strlen(query) + MARGIN;
             if (render_pos < E.col_offset)
                 E.col_offset = render_pos;
             else if (render_pos >= E.col_offset + E.screen_cols - 1 && render_pos > margin)
@@ -1915,10 +1917,10 @@ void editorFindCallback(char *query, int key) {
             if (row < E.row_offset)
                 E.row_offset = row;
             else if (row >= E.row_offset + E.screen_rows)
-                E.row_offset = row - E.screen_rows + 3;
+                E.row_offset = row - E.screen_rows + MARGIN;
 
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-            int margin = strlen(query) + 3;
+            int margin = strlen(query) + MARGIN;
             if (render_pos < E.col_offset)
                 E.col_offset = render_pos;
             else if (render_pos >= E.col_offset + E.screen_cols - 1 && render_pos > margin)
@@ -2136,9 +2138,9 @@ void editorReplaceCallback(char *query, int key) {
             int col = E.find_match_cols[0];
             E.cursor_y = row;
             E.cursor_x = editorRowRxToCx(&E.row[row], col);
-            E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + 3 : 0;
+            E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + MARGIN : 0;
             int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-            int margin = query_len + 3;
+            int margin = query_len + MARGIN;
             E.col_offset = (render_pos > margin) ? render_pos - (E.screen_cols - margin) : 0;
             if (E.col_offset < 0)
                 E.col_offset = 0;
@@ -2185,9 +2187,9 @@ void editorReplaceJumpToCurrent() {
         E.cursor_y = row;
         E.cursor_x = editorRowRxToCx(&E.row[row], col);
         E.preferred_x = E.cursor_x;
-        E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + 3 : 0;
+        E.row_offset = (row >= E.screen_rows) ? row - E.screen_rows + MARGIN : 0;
         int render_pos = editorRowCxToRx(&E.row[row], E.cursor_x);
-        int margin = strlen(E.find_query) + 3;
+        int margin = strlen(E.find_query) + MARGIN;
         E.col_offset = (render_pos > margin) ? render_pos - (E.screen_cols - margin) : 0;
         if (E.col_offset < 0)
             E.col_offset = 0;
@@ -2330,7 +2332,7 @@ void editorPaste() {
             clipboard_data[j++] = clipboard_data[i];
     clipboard_data[j] = '\0';
 
-    char indent[128] = {0};
+    char indent[BUFFER_SIZE] = {0};
     int indent_len = 0;
     if (E.cursor_y < E.num_rows) {
         editorRow *row = &E.row[E.cursor_y];
@@ -2529,8 +2531,8 @@ void editorRedo() {
     editorSetStatusMsg("Redo");
 }
 
-char getMatchingBracket(char c) {
-    switch (c) {
+char getMatchingBracket(char ch) {
+    switch (ch) {
         case '(': return ')';
         case ')': return '(';
         case '{': return '}';
@@ -2545,12 +2547,12 @@ int findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *m
     if (cursor_y >= E.num_rows || cursor_x >= E.row[cursor_y].size)
         return 0;
 
-    char c = E.row[cursor_y].chars[cursor_x];
-    if (!(c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']'))
+    char bracket = E.row[cursor_y].chars[cursor_x];
+    if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
         return 0;
 
-    char match = getMatchingBracket(c);
-    int direction = (c == '(' || c == '{' || c == '[') ? 1 : -1;
+    char match = getMatchingBracket(bracket);
+    int direction = (bracket == '(' || bracket == '{' || bracket == '[') ? 1 : -1;
     int count = 1;
 
     int y = cursor_y;
@@ -2573,7 +2575,7 @@ int findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *m
         }
 
         char ch = E.row[y].chars[x];
-        if (ch == c)
+        if (ch == bracket)
             count++;
         else if (ch == match)
             count--;
