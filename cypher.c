@@ -187,6 +187,7 @@ int isWordChar(int);
 long currentMillis();
 char getClosingChar(char);
 void clampCursorPosition();
+void humanReadableSize(size_t, char *, size_t);
 
 // memory
 void *safeMalloc(size_t);
@@ -357,6 +358,17 @@ void clampCursorPosition() {
         E.cursor_y = E.num_rows - 1;
         E.cursor_x = E.row[E.cursor_y].size;
     }
+}
+
+void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
+    const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unit = 0;
+    double size = bytes;
+    while (size >= 1024 && unit < 4) {
+        size /= 1024;
+        unit++;
+    }
+    snprintf(buf, bufsize, "%.1f %s", size, units[unit]);
 }
 
 void *safeMalloc(size_t size) {
@@ -1398,7 +1410,9 @@ void editorSave() {
                 close(fp);
                 free(buf);
                 E.dirty = 0;
-                editorSetStatusMsg("%d bytes written to disk", len);
+                char sizebuf[SMALL_BUFFER_SIZE];
+                humanReadableSize(len, sizebuf, sizeof(sizebuf));
+                editorSetStatusMsg("%s written to disk", sizebuf);
                 E.quit_times = QUIT_TIMES;
                 return;
             }
@@ -2259,7 +2273,9 @@ void editorCopySelection() {
     E.clipboard = editorGetSelectedText();
 
     if (E.clipboard) {
-        editorSetStatusMsg("Copied %zu bytes", strlen(E.clipboard));
+        char sizebuf[SMALL_BUFFER_SIZE];
+        humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+        editorSetStatusMsg("Copied %s bytes", sizebuf);
         clipboardCopyToSystem(E.clipboard);
     }
 }
@@ -2278,7 +2294,9 @@ void editorCutSelection() {
     clipboardCopyToSystem(E.clipboard);
     editorDeleteSelectedText();
 
-    editorSetStatusMsg("Cut %zu bytes", strlen(E.clipboard));
+    char sizebuf[SMALL_BUFFER_SIZE];
+    humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+    editorSetStatusMsg("Cut %s bytes", sizebuf);
 }
 
 void editorPaste() {
@@ -2363,7 +2381,9 @@ void editorPaste() {
     while (*line_start)
         editorInsertChar(*line_start++);
 
-    editorSetStatusMsg("Pasted %zu bytes from system clipboard", buf_size);
+    char sizebuf[SMALL_BUFFER_SIZE];
+    humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+    editorSetStatusMsg("Pasted %s bytes from system clipboard", sizebuf);
     free(clipboard_data);
     E.is_pasting = 0;
 }
