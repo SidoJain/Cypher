@@ -870,6 +870,9 @@ void editorMoveCursor(int key) {
                 row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
                 if (E.preferred_x < 0) E.preferred_x = E.cursor_x;
                 E.cursor_x = row && row->size > E.preferred_x ? E.preferred_x : (row ? row->size : 0);
+            } else {
+                E.cursor_x = E.row[E.cursor_y].size;
+                E.preferred_x = E.row[E.cursor_y].size;
             }
             break;
         case ARROW_UP:
@@ -878,6 +881,9 @@ void editorMoveCursor(int key) {
                 row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
                 if (E.preferred_x < 0) E.preferred_x = E.cursor_x;
                 E.cursor_x = row && row->size > E.preferred_x ? E.preferred_x : (row ? row->size : 0);
+            } else {
+                E.cursor_x = 0;
+                E.preferred_x = 0;
             }
             break;
     }
