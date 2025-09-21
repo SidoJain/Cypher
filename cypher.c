@@ -985,6 +985,13 @@ void editorScrollPageUp(int scroll_amount) {
             else
                 E.cursor_x = E.preferred_x;
         }
+    } else {
+        if (E.cursor_y != 0)
+            E.cursor_y = 0;
+        else {
+            E.cursor_x = 0;
+            E.preferred_x = 0;
+        }
     }
 }
 
@@ -1002,6 +1009,13 @@ void editorScrollPageDown(int scroll_amount) {
                 E.cursor_x = row_len;
             else
                 E.cursor_x = E.preferred_x;
+        }
+    } else {
+        if (E.cursor_y != E.num_rows - 1)
+            E.cursor_y = E.num_rows - 1;
+        else {
+            E.cursor_x = E.row[E.cursor_y].size;
+            E.preferred_x = E.row[E.cursor_y].size;
         }
     }
 }
