@@ -835,6 +835,25 @@ void editorProcessKeypress() {
         default:
             if (!iscntrl(ch)) {
                 saveEditorStateForUndo();
+                if (E.select_mode) {
+                    char closing = getClosingChar(ch);
+                    if (closing != 0) {
+                        char *selected = editorGetSelectedText();
+                        if (selected) {
+                            int selected_len = strlen(selected);
+
+                            editorDeleteSelectedText();
+                            editorInsertChar(ch);
+                            for (int i = 0; i < selected_len; i++)
+                                editorInsertChar(selected[i]);
+
+                            free(selected);
+                            updateMatchBracket();
+                            break;
+                        }
+                    }
+                }
+
                 editorInsertChar(ch);
             }
             updateMatchBracket();
