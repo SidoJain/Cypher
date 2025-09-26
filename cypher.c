@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.1.7"
+#define CYPHER_VERSION      "1.1.8"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -1637,7 +1637,7 @@ void editorInsertChar(int ch) {
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, ch);
     E.cursor_x++;
 
-    if (!E.is_pasting && closing_char && E.row[E.cursor_y].chars[E.cursor_x] != closing_char)
+    if (!E.is_pasting && closing_char)
         editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
     E.preferred_x = E.cursor_x;
     E.dirty++;
