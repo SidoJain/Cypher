@@ -2314,7 +2314,7 @@ void editorCopySelection() {
     if (E.clipboard) {
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
-        editorSetStatusMsg("Copied %s bytes", sizebuf);
+        editorSetStatusMsg("Copied %s", sizebuf);
         clipboardCopyToSystem(E.clipboard);
     }
 }
@@ -2335,7 +2335,7 @@ void editorCutSelection() {
 
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
-    editorSetStatusMsg("Cut %s bytes", sizebuf);
+    editorSetStatusMsg("Cut %s", sizebuf);
 }
 
 void editorPaste() {
@@ -2422,7 +2422,7 @@ void editorPaste() {
 
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
-    editorSetStatusMsg("Pasted %s bytes from system clipboard", sizebuf);
+    editorSetStatusMsg("Pasted %s from system clipboard", sizebuf);
     free(clipboard_data);
     E.is_pasting = 0;
 }
