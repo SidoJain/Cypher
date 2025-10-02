@@ -2388,6 +2388,7 @@ void editorPaste() {
         if (clipboard_data[i] != '\r')
             clipboard_data[j++] = clipboard_data[i];
     clipboard_data[j] = '\0';
+    buf_size = j - 1;
 
     char indent[BUFFER_SIZE] = {0};
     int indent_len = 0;
@@ -2421,7 +2422,7 @@ void editorPaste() {
         editorInsertChar(*line_start++);
 
     char sizebuf[SMALL_BUFFER_SIZE];
-    humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+    humanReadableSize(buf_size, sizebuf, sizeof(sizebuf));
     editorSetStatusMsg("Pasted %s from system clipboard", sizebuf);
     free(clipboard_data);
     E.is_pasting = 0;
