@@ -276,6 +276,7 @@ int editorReplaceCurrent(const char *, const char *);
 void clipboardCopyToSystem(const char *);
 void editorCopySelection();
 void editorCutSelection();
+void editorCutLine();
 void editorPaste();
 
 // jump operations
@@ -626,7 +627,11 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('x'):     // cut
-            editorCutSelection();
+            saveEditorStateForUndo();
+            if (E.select_mode)
+                editorCutSelection();
+            else
+                editorCutLine();
             updateMatchBracket();
             break;
 
@@ -2066,6 +2071,7 @@ void editorReplace() {
         switch (key) {
             case ESCAPE_CHAR:
                 done = 1;
+                E.select_mode = 0;
                 break;
             case ARROW_DOWN:
             case ARROW_RIGHT:
@@ -2325,7 +2331,6 @@ void editorCutSelection() {
         return;
     }
 
-    saveEditorStateForUndo();
     free(E.clipboard);
     E.clipboard = editorGetSelectedText();
     if (!E.clipboard) return;
@@ -2336,6 +2341,38 @@ void editorCutSelection() {
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
     editorSetStatusMsg("Cut %s", sizebuf);
+}
+
+void editorCutLine() {
+    if (E.cursor_y >= E.num_rows) return;
+
+    editorRow *current_row = &E.row[E.cursor_y];
+    int line_length = current_row->size;
+    char *line_content = safeMalloc(line_length + 2);
+    memcpy(line_content, current_row->chars, line_length);
+    line_content[line_length] = '\n';
+    line_content[line_length + 1] = '\0';
+
+    free(E.clipboard);
+    E.clipboard = line_content;
+    clipboardCopyToSystem(E.clipboard);
+    editorDeleteRow(E.cursor_y);
+
+    if (E.cursor_y >= E.num_rows && E.num_rows > 0)
+        E.cursor_y = E.num_rows - 1;
+
+    if (E.cursor_y >= 0 && E.cursor_y < E.num_rows) {
+        int row_len = E.row[E.cursor_y].size;
+        E.cursor_x = E.cursor_x > row_len ? row_len : E.cursor_x;
+    }
+    else
+        E.cursor_x = 0;
+    E.preferred_x = E.cursor_x;
+
+    char sizebuf[SMALL_BUFFER_SIZE];
+    humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+    editorSetStatusMsg("Cut %s", sizebuf);
+    E.dirty++;
 }
 
 void editorPaste() {
