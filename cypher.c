@@ -373,7 +373,7 @@ void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
 }
 
 void *safeMalloc(size_t size) {
-    void* ptr = malloc(size);
+    void *ptr = malloc(size);
     if (!ptr) die("malloc");
     return ptr;
 }
