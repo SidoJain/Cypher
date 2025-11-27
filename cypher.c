@@ -1636,12 +1636,12 @@ void editorInsertChar(int ch) {
         E.select_mode = 0;
     }
 
-    char closing_char = getClosingChar(ch);
     if (E.cursor_y == E.num_rows)
         editorInsertRow(E.num_rows, "", 0);
     editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, ch);
     E.cursor_x++;
 
+    char closing_char = getClosingChar(ch);
     if (!E.is_pasting && closing_char)
         editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
     E.preferred_x = E.cursor_x;
