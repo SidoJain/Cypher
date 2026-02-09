@@ -116,9 +116,6 @@ make
 - In ~/.bashrc
 
 ```bash
-# set user friendly alias
-alias cypher='cypher.exe'
-
 # add executable file directory to PATH
 export PATH="<directory_path>:$PATH"
 ```

@@ -1,5 +1,6 @@
 .vscode
 
+cypher
 *.exe
 *.txt
 data_generator.c

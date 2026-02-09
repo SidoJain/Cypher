@@ -1,5 +1,5 @@
 CC = gcc
-EXE = cypher.exe
+EXE = cypher
 SRC = cypher.c
 FILE ?=
 
