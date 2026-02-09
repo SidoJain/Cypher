@@ -43,32 +43,32 @@ This README file has been completely written using Cypher.
 
 ## Keyboard Shortcuts
 
-| Shortcut                              | Action |
-|---------------------------------------|--------|
-| `Ctrl-Q`                              | Quit editor |
-| `Ctrl-S`                              | Save current file |
-| `Ctrl-F`                              | Search in file |
-| `Ctrl-R`                              | Find and replace |
-| `Ctrl-A`                              | Select all |
-| `Ctrl-H`                              | Open keybinds manual |
-| `Ctrl-C`                              | Copy selected text |
-| `Ctrl-X`                              | Cut selected text |
-| `Ctrl-V`                              | Paste from clipboard |
-| `Ctrl-G / L`                          | Jump to line |
-| `Ctrl-Z`                              | Undo last major change |
-| `Ctrl-Y`                              | Redo last major change |
-| `Arrow Keys`                          | Move cursor |
-| `Home / End`                          | Move to start / end of line |
-| `Page Up`                             | Scroll up by one screen |
-| `Page Down`                           | Scroll down by one screen |
-| `Backspace`                           | Delete character left of cursor |
-| `Delete`                              | Delete character under cursor |
-| `Enter`                               | Insert new line |
-| `Shift-ArrowKeys / Home / End`        | Select text |
-| `Ctrl-Left / Right`                   | Skip words |
-| `Ctrl-Up / Down`                      | Scroll up / down |
-| `Alt-Up / Down`                       | Move row up / down |
-| `Shift-Alt-Up / Down`                 | Copy row up / down |
+| Shortcut                              | Action                            |
+|---------------------------------------|--------                           |
+| `Ctrl-Q`                              | Quit editor                       |
+| `Ctrl-S`                              | Save current file                 |
+| `Ctrl-F`                              | Search in file                    |
+| `Ctrl-R`                              | Find and replace                  |
+| `Ctrl-A`                              | Select all                        |
+| `Ctrl-H`                              | Open keybinds manual              |
+| `Ctrl-C`                              | Copy selected text                |
+| `Ctrl-X`                              | Cut selected text                 |
+| `Ctrl-V`                              | Paste from clipboard              |
+| `Ctrl-G / L`                          | Jump to line                      |
+| `Ctrl-Z`                              | Undo last major change            |
+| `Ctrl-Y`                              | Redo last major change            |
+| `Arrow Keys`                          | Move cursor                       |
+| `Home / End`                          | Move to start / end of line       |
+| `Page Up`                             | Scroll up by one screen           |
+| `Page Down`                           | Scroll down by one screen         |
+| `Backspace`                           | Delete character left of cursor   |
+| `Delete`                              | Delete character under cursor     |
+| `Enter`                               | Insert new line                   |
+| `Shift-ArrowKeys / Home / End`        | Select text                       |
+| `Ctrl-Left / Right`                   | Skip words                        |
+| `Ctrl-Up / Down`                      | Scroll up / down                  |
+| `Alt-Up / Down`                       | Move row up / down                |
+| `Shift-Alt-Up / Down`                 | Copy row up / down                |
 
 ## Installation & Compilation
 
