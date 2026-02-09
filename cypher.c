@@ -19,7 +19,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.2.0"
+#define CYPHER_VERSION      "1.2.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -348,17 +348,24 @@ char getClosingChar(char ch) {
 }
 
 void clampCursorPosition() {
-    if (E.cursor_x < 0)
+    if (E.num_rows == 0) {
         E.cursor_x = 0;
-    else if (E.cursor_y < E.num_rows)
-        E.cursor_x = E.cursor_x > E.row[E.cursor_y].size ? E.row[E.cursor_y].size : E.cursor_x;
+        E.cursor_y = 0;
+        return;
+    }
 
     if (E.cursor_y < 0)
         E.cursor_y = 0;
     else if (E.cursor_y >= E.num_rows) {
         E.cursor_y = E.num_rows - 1;
         E.cursor_x = E.row[E.cursor_y].size;
+        return;
     }
+
+    if (E.cursor_x < 0)
+        E.cursor_x = 0;
+    else if (E.cursor_x > E.row[E.cursor_y].size)
+        E.cursor_x = E.row[E.cursor_y].size;
 }
 
 void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
