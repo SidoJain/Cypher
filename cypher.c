@@ -116,6 +116,7 @@ typedef struct {
     int row_offset;
     int col_offset;
     int num_rows;
+    int row_capacity;
     editorRow *row;
     int dirty;
     char *filename;
@@ -1518,12 +1519,15 @@ void editorQuit() {
 void editorInsertRow(int at, const char *str, size_t len) {
     if (at < 0 || at > E.num_rows) return;
 
-    E.row = safeRealloc(E.row, sizeof(editorRow) * (E.num_rows + 1));
+    if (E.num_rows >= E.row_capacity) {
+        int new_capacity = E.row_capacity == 0 ? 32 : E.row_capacity * 2;
+        E.row = safeRealloc(E.row, sizeof(editorRow) * new_capacity);
+        E.row_capacity = new_capacity;
+    }
     memmove(&E.row[at + 1], &E.row[at], sizeof(editorRow) * (E.num_rows - at));
 
     E.row[at].size = len;
     E.row[at].chars = safeMalloc(len + 1);
-
     memcpy(E.row[at].chars, str, len);
     E.row[at].chars[len] = '\0';
 
