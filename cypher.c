@@ -34,7 +34,6 @@
 #define STATUS_LENGTH           80
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
-#define PASTE_CHUNK_SIZE        256
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
 
@@ -127,6 +126,7 @@ typedef struct {
     int select_ey;
     char *clipboard;
     int is_pasting;
+    int paste_len;
     char *find_query;
     int *find_match_lines;
     int *find_match_cols;
@@ -659,9 +659,15 @@ void editorProcessKeypress() {
 
         case PASTE_START:       // paste
             E.is_pasting = 1;
+            E.paste_len = 0;
             break;
         case PASTE_END:
             E.is_pasting = 0;
+            {
+                char sizebuf[SMALL_BUFFER_SIZE];
+                humanReadableSize(E.paste_len, sizebuf, sizeof(sizebuf));
+                editorSetStatusMsg("Pasted %s", sizebuf);
+            }
             break;
 
         case CTRL_KEY('a'):     // select all
@@ -686,6 +692,7 @@ void editorProcessKeypress() {
             break;
 
         case '\r':              // enter
+            if (E.is_pasting) E.paste_len++;
             saveEditorStateForUndo();
             editorDeleteSelectedText();
             editorInsertNewline();
@@ -693,6 +700,7 @@ void editorProcessKeypress() {
             break;
 
         case '\t':              // tab
+            if (E.is_pasting) E.paste_len++;
             saveEditorStateForUndo();
             editorInsertChar('\t');
             updateMatchBracket();
@@ -863,6 +871,8 @@ void editorProcessKeypress() {
 
         default:
             if (!iscntrl(ch)) {
+                if (E.is_pasting) E.paste_len++;
+
                 saveEditorStateForUndo();
                 if (E.select_mode) {
                     char closing = getClosingChar(ch);
@@ -1335,6 +1345,7 @@ void editorInit() {
     E.status_msg_time = 0;
     E.clipboard = NULL;
     E.is_pasting = 0;
+    E.paste_len = 0;
     E.select_mode = 0;
     E.select_sx = 0;
     E.select_sy = 0;
