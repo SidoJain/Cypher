@@ -2543,8 +2543,11 @@ void freeEditorState(editorState *state) {
 void saveEditorStateForUndo() {
     long now = currentMillis();
 
-    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1)
-        return;
+    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
+        freeEditorState(&history.undo_stack[0]);
+        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
+        history.undo_top--; 
+    }
 
     if (!history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT)) {
         for (int i = 0; i <= history.redo_top; i++)
