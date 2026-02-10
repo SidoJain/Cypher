@@ -446,8 +446,8 @@ void enableRawMode() {
     raw.c_oflag &= ~(OPOST);                                    // Output flags
     raw.c_cflag |= (CS8);                                       // Set char size to 8 bits/byte
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);            // Local flags
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1;
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
 
     write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
@@ -1015,6 +1015,9 @@ void editorMoveWordRight() {
 }
 
 void editorScrollPageUp(int scroll_amount) {
+    if (E.num_rows == 0)
+        return;
+
     if (E.row_offset > 0) {
         if (scroll_amount > E.row_offset)
             scroll_amount = E.row_offset;
@@ -1043,6 +1046,9 @@ void editorScrollPageUp(int scroll_amount) {
 }
 
 void editorScrollPageDown(int scroll_amount) {
+    if (E.num_rows == 0)
+        return;
+
     if (E.row_offset < E.num_rows - E.screen_rows) {
         E.row_offset += scroll_amount;
         E.cursor_y += scroll_amount;
