@@ -20,7 +20,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.2.2"
+#define CYPHER_VERSION      "1.2.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -96,13 +96,6 @@ enum editorKey {
     PASTE_END
 };
 
-enum environment {
-    WSL,
-    LINUX,
-    MACOS,
-    UNKNOWN
-};
-
 typedef struct {
     int size;
     int rsize;
@@ -143,7 +136,6 @@ typedef struct {
     int match_bracket_x;
     int match_bracket_y;
     int has_match_bracket;
-    int env;
     int quit_times;
     int save_times;
 } editorConfig;
@@ -184,6 +176,7 @@ editorUndoRedo history = {
     .last_edit_time = 0,
     .undo_in_progress = 0,
 };
+static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /*** Function Prototypes ***/
 
@@ -194,6 +187,7 @@ long currentMillis();
 char getClosingChar(char);
 void clampCursorPosition();
 void humanReadableSize(size_t, char *, size_t);
+void base64_encode(const char *, int, char *);
 
 // memory
 void *safeMalloc(size_t);
@@ -201,7 +195,6 @@ void *safeRealloc(void *, size_t);
 char *safeStrdup(const char *);
 
 // terminal
-int getEnv();
 void handleSigWinCh(int);
 void die(const char *);
 void enableRawMode();
@@ -266,7 +259,7 @@ void editorInsertNewline();
 // select operations
 void editorSelectText(int);
 void editorSelectAll();
-char *editorGetSelectedText();
+char *editorGetSelectedText(int *);
 void editorDeleteSelectedText();
 
 // find-replace operations
@@ -280,11 +273,10 @@ void editorReplaceJumpToCurrent();
 int editorReplaceCurrent(const char *, const char *);
 
 // clipboard operations
-void clipboardCopyToSystem(const char *);
+void clipboardCopyToSystem(const char *, int);
 void editorCopySelection();
 void editorCutSelection();
 void editorCutLine();
-void editorPaste();
 
 // jump operations
 void editorJump();
@@ -387,6 +379,23 @@ void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
     snprintf(buf, bufsize, "%.1f %s", size, units[unit]);
 }
 
+void base64_encode(const char *src, int len, char *out) {
+    int i, j;
+    for (i = 0, j = 0; i < len; i += 3, j += 4) {
+        int v = src[i];
+        v = i + 1 < len ? v << 8 | src[i + 1] : v << 8;
+        v = i + 2 < len ? v << 8 | src[i + 2] : v << 8;
+
+        out[j] = base64_table[(v >> 18) & 0x3F];
+        out[j + 1] = base64_table[(v >> 12) & 0x3F];
+        if (i + 1 < len) out[j + 2] = base64_table[(v >> 6) & 0x3F];
+        else out[j + 2] = '=';
+        if (i + 2 < len) out[j + 3] = base64_table[v & 0x3F];
+        else out[j + 3] = '=';
+    }
+    out[j] = '\0';
+}
+
 void *safeMalloc(size_t size) {
     void *ptr = malloc(size);
     if (!ptr) die("malloc");
@@ -405,37 +414,15 @@ char *safeStrdup(const char *str) {
     return ptr;
 }
 
-int getEnv() {
-    #if defined(__APPLE__)          // macOS
-        return MACOS;
-    #elif defined(__linux__)        // Linux or WSL
-        FILE *test_pipe = popen("grep -i microsoft /proc/version", "r");
-        int is_wsl = 0;
-        if (test_pipe) {
-            char buf[BUFFER_SIZE];
-            is_wsl = fgets(buf, sizeof(buf), test_pipe) != NULL;
-            pclose(test_pipe);
-        }
-        if (is_wsl)                 // WSL
-            return WSL;
-        else                        // Linux
-            return LINUX;
-    #else                           // Default Fallback
-        return UNKNOWN;
-    #endif
-}
-
 void handleSigWinCh(int unused) {
     (void)unused;
-    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1)
-        die("getWindowSize");
+    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
     editorRefreshScreen();
 }
 
 void die(const char *str) {
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
-
     perror(str);
     exit(1);
 }
@@ -459,8 +446,7 @@ void enableRawMode() {
 }
 
 void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
-        die("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1) die("tcsetattr");
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_OFF, sizeof(BRACKETED_PASTE_OFF) - 1);
 }
@@ -671,15 +657,9 @@ void editorProcessKeypress() {
             updateMatchBracket();
             break;
 
-        case CTRL_KEY('v'):     // paste
-            editorPaste();
-            updateMatchBracket();
-            break;
-
-        case PASTE_START:
+        case PASTE_START:       // paste
             E.is_pasting = 1;
             break;
-
         case PASTE_END:
             E.is_pasting = 0;
             break;
@@ -887,7 +867,7 @@ void editorProcessKeypress() {
                 if (E.select_mode) {
                     char closing = getClosingChar(ch);
                     if (closing != 0) {
-                        char *selected = editorGetSelectedText();
+                        char *selected = editorGetSelectedText(NULL);
                         if (selected) {
                             int selected_len = strlen(selected);
 
@@ -1369,7 +1349,6 @@ void editorInit() {
     E.match_bracket_x = 0;
     E.match_bracket_y = 0;
     E.has_match_bracket = 0;
-    E.env = getEnv();
     E.quit_times = QUIT_TIMES;
     E.save_times = SAVE_TIMES;
 
@@ -1419,12 +1398,8 @@ void editorOpen(const char *filename) {
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        if (errno == ENOENT) {
-            E.num_rows = 0;
-            E.row = NULL;
-            E.dirty = 0;
+        if (errno == ENOENT)
             return;
-        }
         die("fopen");
     }
 
@@ -1855,8 +1830,11 @@ void editorSelectAll() {
     }
 }
 
-char *editorGetSelectedText() {
-    if (!E.select_mode) return NULL;
+char *editorGetSelectedText(int *len_out) {
+    if (!E.select_mode) {
+        if (len_out) *len_out = 0;
+        return NULL;
+    }
 
     int x1 = E.select_sx, y1 = E.select_sy;
     int x2 = E.select_ex, y2 = E.select_ey;
@@ -1878,6 +1856,7 @@ char *editorGetSelectedText() {
             total++;
     }
 
+    if (len_out) *len_out = total;
     char *buf = safeMalloc(total + 1);
     char *ptr = buf;
     for (int row = y1; row <= y2; row++) {
@@ -1945,7 +1924,7 @@ void editorFind() {
     int saved_col_offset = E.col_offset;
     int saved_row_offset = E.row_offset;
 
-    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback, editorGetSelectedText());
+    char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback, editorGetSelectedText(NULL));
 
     if (query) free(query);
     else {
@@ -2099,7 +2078,7 @@ void editorReplace() {
     int saved_col_offset = E.col_offset;
     int saved_row_offset = E.row_offset;
 
-    char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback, editorGetSelectedText());
+    char *find_query = editorPrompt("Replace - Find: %s (ESC to cancel)", editorReplaceCallback, editorGetSelectedText(NULL));
     if (!find_query || strlen(find_query) == 0 || E.find_num_matches == 0) {
         editorSetStatusMsg("Replace cancelled");
         E.cursor_x = saved_cursor_x;
@@ -2352,31 +2331,22 @@ int editorReplaceCurrent(const char *find_str, const char *replace_str) {
     return 1;
 }
 
-void clipboardCopyToSystem(const char *data) {
-    if (!data) return;
-    FILE *pipe = NULL;
+void clipboardCopyToSystem(const char *data, int len) {
+    if (!data || len <= 0)
+        return;
 
-    switch (E.env) {
-        case MACOS:
-            pipe = popen("pbcopy", "w");
-            break;
-        case WSL:
-            pipe = popen("clip.exe", "w");
-            break;
-        case LINUX:
-            pipe = popen("xclip -selection clipboard", "w");
-            break;
-        case UNKNOWN:
-            pipe = popen("xclip -selection clipboard", "w");
-            break;
-    }
+    size_t output_len = 4 * ((len + 2) / 3);
+    char *b64_data = safeMalloc(output_len + 1);
+    base64_encode(data, len, b64_data);
 
-    if (pipe) {
-        fwrite(data, 1, strlen(data), pipe);
-        pclose(pipe);
-    } else {
-        editorSetStatusMsg("Unable to copy to system clipboard");
-    }
+    char header[] = "\033]52;c;";
+    char footer[] = "\007";
+
+    if (write(STDOUT_FILENO, header, sizeof(header) - 1) == -1) {}
+    if (write(STDOUT_FILENO, b64_data, output_len) == -1) {}
+    if (write(STDOUT_FILENO, footer, sizeof(footer) - 1) == -1) {}
+
+    free(b64_data);
 }
 
 void editorCopySelection() {
@@ -2386,13 +2356,14 @@ void editorCopySelection() {
     }
 
     free(E.clipboard);
-    E.clipboard = editorGetSelectedText();
+    int len;
+    E.clipboard = editorGetSelectedText(&len);
 
     if (E.clipboard) {
         char sizebuf[SMALL_BUFFER_SIZE];
-        humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
+        humanReadableSize(len, sizebuf, sizeof(sizebuf));
         editorSetStatusMsg("Copied %s", sizebuf);
-        clipboardCopyToSystem(E.clipboard);
+        clipboardCopyToSystem(E.clipboard, len);
     }
 }
 
@@ -2403,10 +2374,11 @@ void editorCutSelection() {
     }
 
     free(E.clipboard);
-    E.clipboard = editorGetSelectedText();
+    int len;
+    E.clipboard = editorGetSelectedText(&len);
     if (!E.clipboard) return;
 
-    clipboardCopyToSystem(E.clipboard);
+    clipboardCopyToSystem(E.clipboard, len);
     editorDeleteSelectedText();
 
     char sizebuf[SMALL_BUFFER_SIZE];
@@ -2426,7 +2398,7 @@ void editorCutLine() {
 
     free(E.clipboard);
     E.clipboard = line_content;
-    clipboardCopyToSystem(E.clipboard);
+    clipboardCopyToSystem(E.clipboard, line_length + 1);
     editorDeleteRow(E.cursor_y);
 
     if (E.cursor_y >= E.num_rows && E.num_rows > 0)
@@ -2444,96 +2416,6 @@ void editorCutLine() {
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
     editorSetStatusMsg("Cut %s", sizebuf);
     E.dirty++;
-}
-
-void editorPaste() {
-    char *clipboard_data = NULL;
-    size_t buf_size = 0;
-    FILE *pipe = NULL;
-
-    switch (E.env) {
-        case MACOS:
-            pipe = popen("pbpaste", "r");
-            break;
-        case WSL:
-            pipe = popen("powershell.exe Get-Clipboard", "r");
-            break;
-        case LINUX:
-            pipe = popen("xclip -selection clipboard -o 2>/dev/null", "r");
-            break;
-        case UNKNOWN:
-            pipe = popen("xclip -selection clipboard -o", "r");
-            break;
-    }
-
-    if (!pipe) {
-        editorSetStatusMsg("Clipboard tool missing or inaccessible");
-        return;
-    }
-
-    E.is_pasting = 1;
-    saveEditorStateForUndo();
-    char chunk[PASTE_CHUNK_SIZE];
-    size_t len;
-    while ((len = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
-        clipboard_data = safeRealloc(clipboard_data, buf_size + len + 1);
-
-        memcpy(clipboard_data + buf_size, chunk, len);
-        buf_size += len;
-    }
-    pclose(pipe);
-
-    if (!clipboard_data || buf_size == 0) {
-        free(clipboard_data);
-        editorSetStatusMsg("Clipboard is empty");
-        E.is_pasting = 0;
-        return;
-    }
-
-    clipboard_data[buf_size] = '\0';
-    size_t j = 0;
-    for (size_t i = 0; i < buf_size; i++)
-        if (clipboard_data[i] != '\r')
-            clipboard_data[j++] = clipboard_data[i];
-    clipboard_data[j] = '\0';
-    buf_size = j - 1;
-
-    char indent[BUFFER_SIZE] = {0};
-    int indent_len = 0;
-    if (E.cursor_y < E.num_rows) {
-        editorRow *row = &E.row[E.cursor_y];
-        while (indent_len < row->size && (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t')) {
-            indent[indent_len] = row->chars[indent_len];
-            indent_len++;
-        }
-        indent[indent_len] = '\0';
-    }
-
-    if (E.select_mode)
-        editorDeleteSelectedText();
-
-    char *line_start = clipboard_data;
-    char *newline_pos;
-    while ((newline_pos = strchr(line_start, '\n')) != NULL) {
-        size_t chunk_len = newline_pos - line_start;
-        for (size_t i = 0; i < chunk_len; i++)
-            editorInsertChar(line_start[i]);
-        if (*(newline_pos + 1) != '\0') {
-            editorInsertNewline();
-            for (int i = 0; i < indent_len; i++)
-                editorInsertChar(indent[i]);
-        }
-        line_start = newline_pos + 1;
-    }
-
-    while (*line_start)
-        editorInsertChar(*line_start++);
-
-    char sizebuf[SMALL_BUFFER_SIZE];
-    humanReadableSize(buf_size, sizebuf, sizeof(sizebuf));
-    editorSetStatusMsg("Pasted %s from system clipboard", sizebuf);
-    free(clipboard_data);
-    E.is_pasting = 0;
 }
 
 void editorJump() {
