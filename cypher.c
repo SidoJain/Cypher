@@ -20,7 +20,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.2.1"
+#define CYPHER_VERSION      "1.2.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -53,6 +53,8 @@
 #define YELLOW_FG_COLOR         "\x1b[33m"
 #define DARK_GRAY_BG_COLOR      "\x1b[48;5;238m"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;5;242m"
+#define BRACKETED_PASTE_ON      "\x1b[?2004h"
+#define BRACKETED_PASTE_OFF     "\x1b[?2004l"
 #define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 
@@ -89,7 +91,9 @@ enum editorKey {
     MOUSE_SCROLL_DOWN,
     MOUSE_LEFT_CLICK,
     MOUSE_DRAG,
-    MOUSE_LEFT_RELEASE
+    MOUSE_LEFT_RELEASE,
+    PASTE_START,
+    PASTE_END
 };
 
 enum environment {
@@ -450,6 +454,7 @@ void enableRawMode() {
     raw.c_cc[VTIME] = 0;
 
     write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
+    write(STDOUT_FILENO, BRACKETED_PASTE_ON, sizeof(BRACKETED_PASTE_ON) - 1);
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
@@ -457,6 +462,7 @@ void disableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
         die("tcsetattr");
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
+    write(STDOUT_FILENO, BRACKETED_PASTE_OFF, sizeof(BRACKETED_PASTE_OFF) - 1);
 }
 
 int editorReadKey() {
@@ -501,6 +507,15 @@ int editorReadKey() {
                 return ESCAPE_CHAR;
             } else if (seq[1] >= '0' && seq[1] <= '9') {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return ESCAPE_CHAR;
+                if (seq[2] == '0' || seq[2] == '1') {
+                    char seq3, seq4;
+                    if (read(STDIN_FILENO, &seq3, 1) == 1 && (seq3 == '0' || seq3 == '1')) {
+                        if (read(STDIN_FILENO, &seq4, 1) == 1 && seq4 == '~') {
+                            if (seq[1] == '2' && seq[2] == '0' && seq3 == '0') return PASTE_START;
+                            if (seq[1] == '2' && seq[2] == '0' && seq3 == '1') return PASTE_END;
+                        }
+                    }
+                }
                 if (seq[2] == ';') {
                     if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
                     if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
@@ -659,6 +674,14 @@ void editorProcessKeypress() {
         case CTRL_KEY('v'):     // paste
             editorPaste();
             updateMatchBracket();
+            break;
+
+        case PASTE_START:
+            E.is_pasting = 1;
+            break;
+
+        case PASTE_END:
+            E.is_pasting = 0;
             break;
 
         case CTRL_KEY('a'):     // select all
