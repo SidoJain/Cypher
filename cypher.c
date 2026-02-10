@@ -606,6 +606,8 @@ int getCursorPosition(int *rows, int *cols) {
 
 void editorProcessKeypress() {
     int ch = editorReadKey();
+    if (ch != CTRL_KEY('q'))
+        E.quit_times = QUIT_TIMES;
 
     switch (ch) {
         case CTRL_KEY('q'):     // quit
