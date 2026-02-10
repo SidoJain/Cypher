@@ -206,7 +206,7 @@ int getCursorPosition(int *, int *);
 // input
 void editorProcessKeypress();
 void editorMoveCursor(int);
-char *editorPrompt(const char *, void (*)(char *, int), char *);
+char *editorPrompt(char *, void (*)(const char *, int), char *);
 void editorMoveWordLeft();
 void editorMoveWordRight();
 void editorScrollPageUp(int);
@@ -264,10 +264,10 @@ void editorDeleteSelectedText();
 
 // find-replace operations
 void editorFind();
-void editorFindCallback(char *, int);
+void editorFindCallback(const char *, int);
 void editorScanLineMatches(int, const char *);
 void editorReplace();
-void editorReplaceCallback(char *, int);
+void editorReplaceCallback(const char *, int);
 int editorReplaceAll(const char *);
 void editorReplaceJumpToCurrent();
 int editorReplaceCurrent(const char *, const char *);
@@ -280,7 +280,7 @@ void editorCutLine();
 
 // jump operations
 void editorJump();
-void editorJumpCallback(char *, int);
+void editorJumpCallback(const char *, int);
 
 // undo-redo operations
 void freeEditorState(editorState *);
@@ -944,7 +944,7 @@ void editorMoveCursor(int key) {
         E.cursor_x = row_len;
 }
 
-char *editorPrompt(const char *prompt, void (*callback)(char *, int), char *initial) {
+char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *initial) {
     size_t buf_size = BUFFER_SIZE;
     char *buf = safeMalloc(buf_size);
 
@@ -1937,7 +1937,7 @@ void editorFind() {
     }
 }
 
-void editorFindCallback(char *query, int key) {
+void editorFindCallback(const char *query, int key) {
     int direction = 1;
 
     if (key == '\r' || key == ESCAPE_CHAR || query[0] == '\0') {
@@ -2201,7 +2201,7 @@ void editorReplace() {
     E.find_active = 0;
 }
 
-void editorReplaceCallback(char *query, int key) {
+void editorReplaceCallback(const char *query, int key) {
     (void)key;
     if (query == NULL || !query[0]) {
         E.find_active = 0;
@@ -2441,7 +2441,7 @@ void editorJump() {
     }
 }
 
-void editorJumpCallback(char *buf, int key) {
+void editorJumpCallback(const char *buf, int key) {
     if (key == '\r' || key == ESCAPE_CHAR)
         return;
 
