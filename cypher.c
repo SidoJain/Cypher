@@ -1304,6 +1304,7 @@ void editorInit() {
     E.row_offset = 0;
     E.col_offset = 0;
     E.num_rows = 0;
+    E.row_capacity = 0;
     E.row = NULL;
     E.dirty = 0;
     E.filename = NULL;
@@ -1450,31 +1451,46 @@ void editorSave() {
     E.save_times = SAVE_TIMES;
     new_file = 0;
 
-    int len;
-    char *buf = editorRowsToString(&len);
-
     int fp = open(E.filename,
-                  O_RDWR |      // read and write
-                  O_CREAT,      // create if doesn't exist
+                  O_RDWR  |     // read and write
+                  O_CREAT |     // create if doesn't exist
+                  O_TRUNC,      // clear the file
                   0644);        // permissions
-    if (fp != -1) {
-        if (ftruncate(fp, len) != -1) {
-            if (write(fp, buf, len) == len) {
-                close(fp);
-                free(buf);
-                E.dirty = 0;
-                char sizebuf[SMALL_BUFFER_SIZE];
-                humanReadableSize(len, sizebuf, sizeof(sizebuf));
-                editorSetStatusMsg("%s written to disk", sizebuf);
-                E.quit_times = QUIT_TIMES;
-                return;
-            }
-        }
-        close(fp);
+    if (fp == -1) {
+        editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
+        return;
     }
 
-    free(buf);
-    editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
+    int total_bytes = 0;
+    int success = 1;
+    for (int i = 0; i < E.num_rows; i++) {
+        if (E.row[i].size > 0) {
+            if (write(fp, E.row[i].chars, E.row[i].size) != E.row[i].size) {
+                success = 0;
+                break;
+            }
+            total_bytes += E.row[i].size;
+        }
+
+        if (i < E.num_rows - 1 || E.row[i].size > 0) {
+            if (write(fp, "\n", 1) != 1) {
+                success = 0;
+                break;
+            }
+            total_bytes++;
+        }
+    }
+
+    close(fp);
+    if (success) {
+        E.dirty = 0;
+        char sizebuf[SMALL_BUFFER_SIZE];
+        humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
+        editorSetStatusMsg("%s written to disk", sizebuf);
+        E.quit_times = QUIT_TIMES;
+    }
+    else
+        editorSetStatusMsg("Can't save! Write error on disk.");
 }
 
 void editorQuit() {
