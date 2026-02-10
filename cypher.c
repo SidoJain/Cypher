@@ -1135,7 +1135,7 @@ void editorDrawRows(appendBuffer *ab) {
                         if (E.find_match_lines[m] == file_row) {
                             int col_start = E.find_match_cols[m];
                             int col_end = col_start + match_len;
-                            if (j + E.col_offset >= col_start && j + E.col_offset < col_end) {
+                            if (cx >= col_start && cx < col_end) {
                                 is_find = 1;
                                 if (m == E.find_current_idx)
                                     is_current_match = 1;
@@ -1932,7 +1932,7 @@ void editorFindCallback(char *query, int key) {
         E.find_current_idx = -1;
 
         for (int i = 0; i < E.num_rows; i++) {
-            char *line = E.row[i].render;
+            char *line = E.row[i].chars;
             char *ptr = line;
             while ((ptr = strstr(ptr, query)) != NULL) {
                 E.find_match_lines = safeRealloc(E.find_match_lines, sizeof(int) * (E.find_num_matches + 1));
@@ -1951,7 +1951,7 @@ void editorFindCallback(char *query, int key) {
             int row = E.find_match_lines[0];
             int col = E.find_match_cols[0];
             E.cursor_y = row;
-            E.cursor_x = editorRowRxToCx(&E.row[row], col);
+            E.cursor_x = col;
             E.row_offset = E.num_rows;
             E.preferred_x = E.cursor_x;
 
@@ -1978,7 +1978,7 @@ void editorFindCallback(char *query, int key) {
             int row = E.find_match_lines[E.find_current_idx];
             int col = E.find_match_cols[E.find_current_idx];
             E.cursor_y = row;
-            E.cursor_x = editorRowRxToCx(&E.row[row], col);
+            E.cursor_x = col;
             E.preferred_x = E.cursor_x;
 
             if (row < E.row_offset)
@@ -2013,7 +2013,7 @@ void editorScanLineMatches(int line, const char *query) {
     }
 
     if (line < E.num_rows) {
-        char *render_line = E.row[line].render;
+        char *render_line = E.row[line].chars;
         int query_len = strlen(query);
         char *ptr = render_line;
         while ((ptr = strstr(ptr, query)) != NULL) {
