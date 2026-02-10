@@ -888,6 +888,8 @@ void editorProcessKeypress() {
 }
 
 void editorMoveCursor(int key) {
+    if (E.num_rows == 0)
+        return;
     editorRow *row = (E.cursor_y >= E.num_rows) ? NULL : &E.row[E.cursor_y];
 
     switch (key) {
