@@ -16,6 +16,7 @@
 #include <time.h>
 #include <stdarg.h>
 #include <fcntl.h>
+#include <signal.h>
 
 /*** Defines ***/
 
@@ -196,6 +197,7 @@ char *safeStrdup(const char *);
 
 // terminal
 int getEnv();
+void handleSigWinCh(int);
 void die(const char *);
 void enableRawMode();
 void disableRawMode();
@@ -305,6 +307,7 @@ void editorMouseLeftRelease();
 int main(int argc, char *argv[]) {
     clearTerminal();
     enableRawMode();
+    signal(SIGWINCH, handleSigWinCh);
     editorInit();
     if (argc >= 2)
         editorOpen(argv[1]);
@@ -415,6 +418,14 @@ int getEnv() {
     #else                           // Default Fallback
         return UNKNOWN;
     #endif
+}
+
+void handleSigWinCh(int unused) {
+    (void)unused;
+    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1)
+        die("getWindowSize");
+    E.screen_rows -= 2;
+    editorRefreshScreen();
 }
 
 void die(const char *str) {
