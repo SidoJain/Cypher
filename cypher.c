@@ -20,7 +20,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.2.3"
+#define CYPHER_VERSION      "1.2.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -138,6 +138,7 @@ typedef struct {
     int has_match_bracket;
     int quit_times;
     int save_times;
+    volatile sig_atomic_t window_resized;
 } editorConfig;
 
 typedef struct {
@@ -169,6 +170,7 @@ typedef struct {
 
 /*** Global Data ***/
 
+static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 editorConfig E;
 editorUndoRedo history = {
     .undo_top = -1,
@@ -176,7 +178,6 @@ editorUndoRedo history = {
     .last_edit_time = 0,
     .undo_in_progress = 0,
 };
-static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /*** Function Prototypes ***/
 
@@ -311,6 +312,12 @@ int main(int argc, char *argv[]) {
 
     editorSetStatusMsg("HELP: Ctrl-H");
     while (1) {
+        if (E.window_resized) {
+            E.window_resized = 0;
+            if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
+            E.screen_rows -= 2;
+            editorRefreshScreen();
+        }
         editorRefreshScreen();
         editorProcessKeypress();
     }
@@ -416,9 +423,7 @@ char *safeStrdup(const char *str) {
 
 void handleSigWinCh(int unused) {
     (void)unused;
-    if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
-    E.screen_rows -= 2;
-    editorRefreshScreen();
+    E.window_resized = 1;
 }
 
 void die(const char *str) {
@@ -1362,6 +1367,7 @@ void editorInit() {
     E.has_match_bracket = 0;
     E.quit_times = QUIT_TIMES;
     E.save_times = SAVE_TIMES;
+    E.window_resized = 0;
 
     if (getWindowSize(&E.screen_rows, &E.screen_cols) == -1) die("getWindowSize");
     E.screen_rows -= 2;
@@ -2368,7 +2374,35 @@ void clipboardCopyToSystem(const char *data, int len) {
     if (!data || len <= 0)
         return;
 
-    size_t output_len = 4 * ((len + 2) / 3);
+    #ifdef __APPLE__                                 // MacOS
+        if (getenv("SSH_TTY") == NULL) {
+            FILE *pipe = popen("pbcopy", "w");
+            if (pipe != NULL) {
+                fwrite(data, 1, len, pipe);
+                pclose(pipe);
+                return; 
+            }
+        }
+    #endif
+
+    if (getenv("SSH_TTY") == NULL) {
+        if (getenv("WAYLAND_DISPLAY")) {            // Wayland
+            FILE *pipe = popen("wl-copy", "w");
+            if (pipe) {
+                fwrite(data, 1, len, pipe);
+                if (pclose(pipe) == 0) return;
+            }
+        }
+        if (getenv("DISPLAY")) {                    // X11
+            FILE *pipe = popen("xclip -selection clipboard", "w");
+            if (pipe) {
+                fwrite(data, 1, len, pipe);
+                if (pclose(pipe) == 0) return;
+            }
+        }
+    }
+
+    size_t output_len = 4 * ((len + 2) / 3);        // Fallback - OSC 52
     char *b64_data = safeMalloc(output_len + 1);
     base64_encode(data, len, b64_data);
 
@@ -2504,16 +2538,18 @@ void freeEditorState(editorState *state) {
 void saveEditorStateForUndo() {
     long now = currentMillis();
 
-    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
-        freeEditorState(&history.undo_stack[0]);
-        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
-        history.undo_top--; 
-    }
-
-    if (!history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT)) {
+    int should_save = !history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT);
+    if (should_save) {
         for (int i = 0; i <= history.redo_top; i++)
             freeEditorState(&history.redo_stack[i]);
         history.redo_top = -1;
+
+        if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
+            freeEditorState(&history.undo_stack[0]);
+            memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
+            history.undo_stack[history.undo_top].buffer = NULL;
+            history.undo_top--; 
+        }
 
         history.undo_top++;
         editorState *state = &history.undo_stack[history.undo_top];
@@ -2541,6 +2577,7 @@ void restoreEditorState(const editorState *state) {
     free(E.row);
     E.row = NULL;
     E.num_rows = 0;
+    E.row_capacity = 0;
 
     size_t start = 0;
     for (size_t i = 0; i < state->buf_len; i++) {
@@ -2570,6 +2607,7 @@ void editorUndo() {
     if (history.redo_top < UNDO_REDO_STACK_SIZE - 1) {
         history.redo_top++;
         editorState *state = &history.redo_stack[history.redo_top];
+        freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
@@ -2586,7 +2624,7 @@ void editorUndo() {
     restoreEditorState(undo_st);
     freeEditorState(undo_st);
     history.undo_top--;
-    editorSetStatusMsg("Undo");
+    editorSetStatusMsg("Undid");
 }
 
 void editorRedo() {
@@ -2598,6 +2636,7 @@ void editorRedo() {
     if (history.undo_top < UNDO_REDO_STACK_SIZE - 1) {
         history.undo_top++;
         editorState *state = &history.undo_stack[history.undo_top];
+        freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
         state->cursor_x = E.cursor_x;
@@ -2614,7 +2653,7 @@ void editorRedo() {
     restoreEditorState(redo_st);
     freeEditorState(redo_st);
     history.redo_top--;
-    editorSetStatusMsg("Redo");
+    editorSetStatusMsg("Redid");
 }
 
 char getMatchingBracket(char ch) {

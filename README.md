@@ -70,6 +70,45 @@ This README file has been completely written using Cypher.
 | `Alt-Up / Down`                       | Move row up / down                |
 | `Shift-Alt-Up / Down`                 | Copy row up / down                |
 
+## Clipboard Support
+
+Cypher features integrated system clipboard handling that works across local and remote sessions. It employs a dual strategy approach to ensure compatibility across different operating systems and connection types.
+
+### How it Works
+
+1. **MacOS (Local):** When running natively on MacOS, Cypher detects the environment and uses the `pbcopy` utility to communicate directly with the system clipboard.
+
+2. **Linux & Remote (SSH):** For Linux users or those connected via SSH, Cypher utilizes the **OSC 52** terminal escape sequence. This method Base64-encodes the selected text and "tunnels" it through the terminal emulator to your local machine's clipboard.
+
+### Setup & Requirements
+
+To use the clipboard over SSH or on Linux, your terminal emulator must support the OSC 52 protocol.
+
+#### 1. Terminal Compatibility
+
+| Terminal | Compatibility | Action Required |
+| :--- | :--- | :--- |
+| **iTerm2** | Excellent | Enable "Applications in terminal may access clipboard" in **Settings > General > Applications**. |
+| **Alacritty / Kitty** | Native | Supported by default in most versions. |
+| **Windows Terminal** | Good | Supported since version 1.17. |
+| **VS Code Terminal** | Native | Works out of the box. |
+| **Apple Terminal** | **None** | Does not support OSC 52. Consider using [iTerm2](https://iterm2.com/) for remote clipboard support. |
+
+#### 2. Using with tmux
+
+If you use `tmux`, you must configure it to allow clipboard and mouse operations. Add the following line to your `~/.tmux.conf`:
+
+```bash
+set -s set-clipboard on
+set -g mouse on
+set -s escape-time 0
+```
+
+### Known Limitations
+
+- Size Constraints: Most terminal emulators limit OSC 52 transfers to approximately 74 KB. Large copy operations exceeding this limit may fail silently.
+- Security Settings: Some Linux distributions or hardened terminal configurations disable clipboard writing by default to prevent malicious scripts from altering your clipboard.
+
 ## Installation & Compilation
 
 - **Requirements:**
