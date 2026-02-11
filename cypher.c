@@ -147,7 +147,7 @@ typedef struct {
 
 typedef struct {
     char *buffer;
-    int buf_len;
+    size_t buf_len;
     int cursor_x;
     int preferred_x;
     int cursor_y;
@@ -232,7 +232,7 @@ void abFree(appendBuffer *);
 
 // file i/o
 void editorOpen(const char *);
-char *editorRowsToString(int *);
+char *editorRowsToString(size_t *);
 void editorSave();
 void editorQuit();
 
@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
 /*** Function Definitions ***/
 
 void clearTerminal() {
-    system("clear");
+    if (write(STDOUT_FILENO, CLEAR_SCREEN  CURSOR_RESET, sizeof(CLEAR_SCREEN  CURSOR_RESET)) == -1) {}
 }
 
 int isWordChar(int ch) {
@@ -1427,8 +1427,8 @@ void editorOpen(const char *filename) {
     E.dirty = 0;
 }
 
-char *editorRowsToString(int *buf_len) {
-    int total_len = 0;
+char *editorRowsToString(size_t *buf_len) {
+    size_t total_len = 0;
     for (int i = 0; i < E.num_rows; i++) {
         total_len += E.row[i].size;
         if (i < E.num_rows - 1 || E.row[i].size > 0)
@@ -1436,7 +1436,7 @@ char *editorRowsToString(int *buf_len) {
     }
     *buf_len = total_len;
 
-    char *buf = safeMalloc(total_len);
+    char *buf = safeMalloc(total_len + 1);
     char *ptr = buf;
     for (int i = 0; i < E.num_rows; i++) {
         memcpy(ptr, E.row[i].chars, E.row[i].size);
@@ -1480,12 +1480,15 @@ void editorSave() {
     E.save_times = SAVE_TIMES;
     new_file = 0;
 
-    int fp = open(E.filename,
+    char *tmp_filename = safeMalloc(strlen(E.filename) + 5);
+    sprintf(tmp_filename, "%s.tmp", E.filename);
+    int fd = open(tmp_filename,
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
                   O_TRUNC,      // clear the file
                   0644);        // permissions
-    if (fp == -1) {
+    if (fd == -1) {
+        free(tmp_filename);
         editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
         return;
     }
@@ -1494,7 +1497,7 @@ void editorSave() {
     int success = 1;
     for (int i = 0; i < E.num_rows; i++) {
         if (E.row[i].size > 0) {
-            if (write(fp, E.row[i].chars, E.row[i].size) != E.row[i].size) {
+            if (write(fd, E.row[i].chars, E.row[i].size) != E.row[i].size) {
                 success = 0;
                 break;
             }
@@ -1502,7 +1505,7 @@ void editorSave() {
         }
 
         if (i < E.num_rows - 1 || E.row[i].size > 0) {
-            if (write(fp, "\n", 1) != 1) {
+            if (write(fd, "\n", 1) != 1) {
                 success = 0;
                 break;
             }
@@ -1510,16 +1513,25 @@ void editorSave() {
         }
     }
 
-    close(fp);
+    close(fd);
     if (success) {
         E.dirty = 0;
+        E.quit_times = QUIT_TIMES;
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
-        editorSetStatusMsg("%s written to disk", sizebuf);
-        E.quit_times = QUIT_TIMES;
+
+        if (rename(tmp_filename, E.filename) == -1) {
+            unlink(tmp_filename);
+            editorSetStatusMsg("Save failed! Could not rename tmp file.");
+        }
+        else
+            editorSetStatusMsg("%s written to disk", sizebuf);
     }
-    else
+    else {
+        unlink(tmp_filename);
         editorSetStatusMsg("Can't save! Write error on disk.");
+    }
+    free(tmp_filename);
 }
 
 void editorQuit() {
@@ -1571,8 +1583,12 @@ void editorUpdateRow(editorRow *row) {
             while (idx % TAB_SIZE != 0)
                 row->render[idx++] = ' ';
         }
-        else
-            row->render[idx++] = row->chars[i];
+        else {
+            if (iscntrl(row->chars[i]))
+                row->render[idx++] = '?';
+            else
+                row->render[idx++] = row->chars[i];
+        }
     }
 
     row->render[idx] = '\0';
@@ -2069,6 +2085,12 @@ void editorScanLineMatches(int line, const char *query) {
         int query_len = strlen(query);
         char *ptr = render_line;
         while ((ptr = strstr(ptr, query)) != NULL) {
+            if (new_num_matches >= max_matches) {
+                max_matches *= 2;
+                new_lines = safeRealloc(new_lines, sizeof(int) * max_matches);
+                new_cols = safeRealloc(new_cols, sizeof(int) * max_matches);
+            }
+            
             new_lines[new_num_matches] = line;
             new_cols[new_num_matches] = ptr - render_line;
             new_num_matches++;
@@ -2521,7 +2543,7 @@ void restoreEditorState(const editorState *state) {
     E.num_rows = 0;
 
     size_t start = 0;
-    for (int i = 0; i < state->buf_len; i++) {
+    for (size_t i = 0; i < state->buf_len; i++) {
         if (state->buffer[i] == '\n') {
             editorInsertRow(E.num_rows, &state->buffer[start], i - start);
             start = i + 1;
