@@ -305,7 +305,13 @@ void editorMouseLeftRelease();
 int main(int argc, char *argv[]) {
     clearTerminal();
     enableRawMode();
-    signal(SIGWINCH, handleSigWinCh);
+
+    struct sigaction sa;
+    sa.sa_handler = handleSigWinCh;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGWINCH, &sa, NULL);
+
     editorInit();
     if (argc >= 2)
         editorOpen(argv[1]);
@@ -459,9 +465,11 @@ void disableRawMode() {
 int editorReadKey() {
     int nread;
     char c;
-    while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
-        if (nread == -1 && errno != EAGAIN)
-            die("read");
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        if (nread == -1 && errno == EAGAIN) continue;
+        if (nread == -1 && errno == EINTR) return 0;
+        die("read");
+    }
 
     if (c == ESCAPE_CHAR) {
         char seq[SMALL_BUFFER_SIZE] = {0};
@@ -624,6 +632,7 @@ int getCursorPosition(int *rows, int *cols) {
 
 void editorProcessKeypress() {
     int ch = editorReadKey();
+    if (ch == 0) return;        // phantom key
     if (ch != CTRL_KEY('q'))
         E.quit_times = QUIT_TIMES;
 
