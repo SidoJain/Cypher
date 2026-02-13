@@ -54,6 +54,8 @@
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;5;242m"
 #define BRACKETED_PASTE_ON      "\x1b[?2004h"
 #define BRACKETED_PASTE_OFF     "\x1b[?2004l"
+#define ENTER_ALTERNATE_SCREEN  "\x1b[?1049h"
+#define EXIT_ALTERNATE_SCREEN   "\x1b[?1049l"
 #define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 
@@ -303,7 +305,6 @@ void editorMouseLeftRelease();
 /*** Main ***/
 
 int main(int argc, char *argv[]) {
-    clearTerminal();
     enableRawMode();
 
     struct sigaction sa;
@@ -328,7 +329,6 @@ int main(int argc, char *argv[]) {
         editorProcessKeypress();
     }
 
-    clearTerminal();
     return 0;
 }
 
@@ -433,7 +433,7 @@ void handleSigWinCh(int unused) {
 }
 
 void die(const char *str) {
-    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
+    write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
     perror(str);
     exit(1);
 }
@@ -451,6 +451,7 @@ void enableRawMode() {
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
 
+    write(STDOUT_FILENO, ENTER_ALTERNATE_SCREEN, sizeof(ENTER_ALTERNATE_SCREEN) - 1);
     write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_ON, sizeof(BRACKETED_PASTE_ON) - 1);
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
@@ -460,6 +461,7 @@ void disableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1) die("tcsetattr");
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_OFF, sizeof(BRACKETED_PASTE_OFF) - 1);
+    write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
 }
 
 int editorReadKey() {
