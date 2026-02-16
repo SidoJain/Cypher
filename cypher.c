@@ -61,6 +61,11 @@
 
 /*** Structs and Enums ***/
 
+typedef enum {
+    false = 0,
+    true = 1
+} bool;
+
 enum editorKey {
     BACKSPACE = 127,
     ARROW_LEFT = 1000,
@@ -116,28 +121,28 @@ typedef struct {
     int num_rows;
     int row_capacity;
     editorRow *row;
-    int dirty;
+    bool dirty;
     char *filename;
     char status_msg[STATUS_LENGTH];
     time_t status_msg_time;
     struct termios original_termios;
-    int select_mode;
+    bool select_mode;
     int select_sx;
     int select_sy;
     int select_ex;
     int select_ey;
     char *clipboard;
-    int is_pasting;
+    bool is_pasting;
     int paste_len;
     char *find_query;
     int *find_match_lines;
     int *find_match_cols;
     int find_num_matches;
     int find_current_idx;
-    int find_active;
+    bool find_active;
     int match_bracket_x;
     int match_bracket_y;
-    int has_match_bracket;
+    bool has_match_bracket;
     int quit_times;
     int save_times;
     volatile sig_atomic_t window_resized;
@@ -185,7 +190,7 @@ editorUndoRedo history = {
 
 // utility
 void clearTerminal();
-int isWordChar(int);
+bool isWordChar(int);
 long currentMillis();
 char getClosingChar(char);
 void clampCursorPosition();
@@ -273,7 +278,7 @@ void editorReplace();
 void editorReplaceCallback(const char *, int);
 int editorReplaceAll(const char *);
 void editorReplaceJumpToCurrent();
-int editorReplaceCurrent(const char *, const char *);
+bool editorReplaceCurrent(const char *, const char *);
 
 // clipboard operations
 void clipboardCopyToSystem(const char *, int);
@@ -294,7 +299,7 @@ void editorRedo();
 
 // bracket highlighting
 char getMatchingBracket(char);
-int findMatchingBracketPosition(int, int, int *, int *);
+bool findMatchingBracketPosition(int, int, int *, int *);
 void updateMatchBracket();
 
 // mouse operations
@@ -338,7 +343,7 @@ void clearTerminal() {
     if (write(STDOUT_FILENO, CLEAR_SCREEN  CURSOR_RESET, sizeof(CLEAR_SCREEN  CURSOR_RESET)) == -1) {}
 }
 
-int isWordChar(int ch) {
+bool isWordChar(int ch) {
     return is_alnum(ch) || ch == '_';
 }
 
@@ -675,11 +680,11 @@ void editorProcessKeypress() {
             break;
 
         case PASTE_START:       // paste
-            E.is_pasting = 1;
+            E.is_pasting = true;
             E.paste_len = 0;
             break;
         case PASTE_END:
-            E.is_pasting = 0;
+            E.is_pasting = false;
             {
                 char sizebuf[SMALL_BUFFER_SIZE];
                 humanReadableSize(E.paste_len, sizebuf, sizeof(sizebuf));
@@ -728,11 +733,11 @@ void editorProcessKeypress() {
         case HOME_KEY:
             E.cursor_x = 0;
             E.preferred_x = E.cursor_x;
-            E.select_mode = 0;
+            E.select_mode = false;
             updateMatchBracket();
             break;
         case END_KEY:
-            E.select_mode = 0;
+            E.select_mode = false;
             if (E.cursor_y < E.num_rows) {
                 E.cursor_x = E.row[E.cursor_y].size;
                 E.preferred_x = E.cursor_x;
@@ -788,7 +793,7 @@ void editorProcessKeypress() {
 
         case CTRL_SHIFT_ARROW_LEFT:
             if (!E.select_mode) {
-                E.select_mode = 1;
+                E.select_mode = true;
                 E.select_sx = E.cursor_x;
                 E.select_sy = E.cursor_y;
             }
@@ -799,7 +804,7 @@ void editorProcessKeypress() {
             break;
         case CTRL_SHIFT_ARROW_RIGHT:
             if (!E.select_mode) {
-                E.select_mode = 1;
+                E.select_mode = true;
                 E.select_sx = E.cursor_x;
                 E.select_sy = E.cursor_y;
             }
@@ -811,7 +816,7 @@ void editorProcessKeypress() {
 
         case SHIFT_HOME:
             if (!E.select_mode) {
-                E.select_mode = 1;
+                E.select_mode = true;
                 E.select_sx = E.cursor_x;
                 E.select_sy = E.cursor_y;
             }
@@ -822,7 +827,7 @@ void editorProcessKeypress() {
             break;
         case SHIFT_END:
             if (!E.select_mode) {
-                E.select_mode = 1;
+                E.select_mode = true;
                 E.select_sx = E.cursor_x;
                 E.select_sy = E.cursor_y;
             }
@@ -838,7 +843,7 @@ void editorProcessKeypress() {
         case ARROW_UP:
         case ARROW_DOWN:
             history.undo_in_progress = 0;
-            E.select_mode = 0;
+            E.select_mode = false;
             editorMoveCursor(ch);
             updateMatchBracket();
             break;
@@ -885,7 +890,7 @@ void editorProcessKeypress() {
 
         case ESCAPE_CHAR:
             if (E.select_mode)
-                E.select_mode = 0;
+                E.select_mode = false;
             break;
 
         default:
@@ -1357,14 +1362,14 @@ void editorInit() {
     E.num_rows = 0;
     E.row_capacity = 0;
     E.row = NULL;
-    E.dirty = 0;
+    E.dirty = false;
     E.filename = NULL;
     E.status_msg[0] = '\0';
     E.status_msg_time = 0;
     E.clipboard = NULL;
-    E.is_pasting = 0;
+    E.is_pasting = false;
     E.paste_len = 0;
-    E.select_mode = 0;
+    E.select_mode = false;
     E.select_sx = 0;
     E.select_sy = 0;
     E.select_ex = 0;
@@ -1374,10 +1379,10 @@ void editorInit() {
     E.find_match_cols = NULL;
     E.find_num_matches = 0;
     E.find_current_idx = -1;
-    E.find_active = 0;
+    E.find_active = false;
     E.match_bracket_x = 0;
     E.match_bracket_y = 0;
-    E.has_match_bracket = 0;
+    E.has_match_bracket = false;
     E.quit_times = QUIT_TIMES;
     E.save_times = SAVE_TIMES;
     E.window_resized = 0;
@@ -1407,7 +1412,7 @@ void editorCleanup() {
     E.find_match_cols = NULL;
     E.find_num_matches = 0;
     E.find_current_idx = -1;
-    E.find_active = 0;
+    E.find_active = false;
 }
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
@@ -1443,7 +1448,7 @@ void editorOpen(const char *filename) {
     }
     free(line);
     fclose(fp);
-    E.dirty = 0;
+    E.dirty = true;
 }
 
 char *editorRowsToString(size_t *buf_len) {
@@ -1470,7 +1475,7 @@ char *editorRowsToString(size_t *buf_len) {
 }
 
 void editorSave() {
-    static int new_file = 0;
+    static bool new_file = false;
     if (E.filename == NULL) {
         char *input = editorPrompt("Save as: %s (ESC to cancel)", NULL, NULL);
         if (input == NULL) {
@@ -1488,7 +1493,7 @@ void editorSave() {
             input = new_name;
         }
         E.filename = input;
-        new_file = 1;
+        new_file = true;
     }
 
     if (new_file && access(E.filename, F_OK) == 0 && E.save_times != 0) {
@@ -1499,7 +1504,7 @@ void editorSave() {
         return;
     }
     E.save_times = SAVE_TIMES;
-    new_file = 0;
+    new_file = false;
 
     char *tmp_filename = safeMalloc(strlen(E.filename) + 5);
     sprintf(tmp_filename, "%s.tmp", E.filename);
@@ -1517,11 +1522,11 @@ void editorSave() {
     }
 
     int total_bytes = 0;
-    int success = 1;
+    bool success = true;
     for (int i = 0; i < E.num_rows; i++) {
         if (E.row[i].size > 0) {
             if (write(fd, E.row[i].chars, E.row[i].size) != E.row[i].size) {
-                success = 0;
+                success = false;
                 break;
             }
             total_bytes += E.row[i].size;
@@ -1529,7 +1534,7 @@ void editorSave() {
 
         if (i < E.num_rows - 1 || E.row[i].size > 0) {
             if (write(fd, "\n", 1) != 1) {
-                success = 0;
+                success = false;
                 break;
             }
             total_bytes++;
@@ -1538,7 +1543,7 @@ void editorSave() {
 
     close(fd);
     if (success) {
-        E.dirty = 0;
+        E.dirty = false;
         E.quit_times = QUIT_TIMES;
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
@@ -1593,7 +1598,7 @@ void editorInsertRow(int at, const char *str, size_t len) {
     editorUpdateRow(&E.row[at]);
 
     E.num_rows++;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorUpdateRow(editorRow *row) {
@@ -1657,7 +1662,7 @@ void editorRowInsertChar(editorRow *row, int at, int ch) {
     row->size++;
     row->chars[at] = ch;
     editorUpdateRow(row);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorRowDeleteChar(editorRow *row, int at) {
@@ -1666,7 +1671,7 @@ void editorRowDeleteChar(editorRow *row, int at) {
     memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
     row->size--;
     editorUpdateRow(row);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorFreeRow(editorRow *row) {
@@ -1680,7 +1685,7 @@ void editorDeleteRow(int at) {
     editorFreeRow(&E.row[at]);
     memmove(&E.row[at], &E.row[at + 1], sizeof(editorRow) * (E.num_rows - at - 1));
     E.num_rows--;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorRowAppendString(editorRow *row, const char *str, size_t len) {
@@ -1689,7 +1694,7 @@ void editorRowAppendString(editorRow *row, const char *str, size_t len) {
     row->size += len;
     row->chars[row->size] = '\0';
     editorUpdateRow(row);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorMoveRowUp() {
@@ -1700,7 +1705,7 @@ void editorMoveRowUp() {
     E.row[E.cursor_y] = temp;
 
     E.cursor_y--;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorMoveRowDown() {
@@ -1711,7 +1716,7 @@ void editorMoveRowDown() {
     E.row[E.cursor_y] = temp;
 
     E.cursor_y++;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorCopyRowUp() {
@@ -1719,7 +1724,7 @@ void editorCopyRowUp() {
 
     editorRow *row = &E.row[E.cursor_y];
     editorInsertRow(E.cursor_y, row->chars, row->size);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorCopyRowDown() {
@@ -1727,14 +1732,14 @@ void editorCopyRowDown() {
 
     editorRow *row = &E.row[E.cursor_y];
     editorInsertRow(++E.cursor_y, row->chars, row->size);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorInsertChar(int ch) {
     if (E.select_mode) {
         saveEditorStateForUndo();
         editorDeleteSelectedText();
-        E.select_mode = 0;
+        E.select_mode = false;
     }
 
     if (E.cursor_y == E.num_rows)
@@ -1746,7 +1751,7 @@ void editorInsertChar(int ch) {
     if (!E.is_pasting && closing_char)
         editorRowInsertChar(&E.row[E.cursor_y], E.cursor_x, closing_char);
     E.preferred_x = E.cursor_x;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorDeleteChar(int is_backspace) {
@@ -1781,7 +1786,7 @@ void editorDeleteChar(int is_backspace) {
                 for (int i = 0; i < spaces; i++)
                     editorRowDeleteChar(row, --E.cursor_x);
                 E.preferred_x = E.cursor_x;
-                E.dirty++;
+                E.dirty = true;
                 return;
             }
         }
@@ -1791,7 +1796,7 @@ void editorDeleteChar(int is_backspace) {
             editorRowDeleteChar(row, E.cursor_x - 1);
             E.cursor_x--;
             E.preferred_x = E.cursor_x;
-            E.dirty++;
+            E.dirty = true;
             return;
         }
 
@@ -1802,7 +1807,7 @@ void editorDeleteChar(int is_backspace) {
         editorDeleteRow(E.cursor_y--);
     }
     E.preferred_x = E.cursor_x;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorInsertNewline() {
@@ -1861,7 +1866,7 @@ void editorInsertNewline() {
 
 void editorSelectText(int ch) {
     if (!E.select_mode) {
-        E.select_mode = 1;
+        E.select_mode = true;
         E.select_sx = E.cursor_x;
         E.select_sy = E.cursor_y;
     }
@@ -1872,7 +1877,7 @@ void editorSelectText(int ch) {
 
 void editorSelectAll() {
     if (E.num_rows > 0) {
-        E.select_mode = 1;
+        E.select_mode = true;
         E.select_sx = 0;
         E.select_sy = 0;
         E.select_ex = E.row[E.num_rows - 1].size;
@@ -1970,12 +1975,12 @@ void editorDeleteSelectedText() {
     E.cursor_y = y1;
     E.preferred_x = E.cursor_x;
 
-    E.select_mode = 0;
-    E.dirty++;
+    E.select_mode = false;
+    E.dirty = true;
 }
 
 void editorFind() {
-    E.has_match_bracket = 0;
+    E.has_match_bracket = false;
     int saved_cursor_x = E.cursor_x;
     int saved_cursor_y = E.cursor_y;
     int saved_col_offset = E.col_offset;
@@ -1990,7 +1995,7 @@ void editorFind() {
         E.cursor_y = saved_cursor_y;
         E.col_offset = saved_col_offset;
         E.row_offset = saved_row_offset;
-        E.find_active = 0;
+        E.find_active = false;
     }
 }
 
@@ -2000,7 +2005,7 @@ void editorFindCallback(const char *query, int key) {
     if (key == '\r' || key == ESCAPE_CHAR || query[0] == '\0') {
         if (key == ESCAPE_CHAR)
             editorSetStatusMsg("Find cancelled");
-        E.find_active = 0;
+        E.find_active = false;
         free(E.find_query);
         E.find_query = NULL;
         free(E.find_match_lines);
@@ -2066,7 +2071,7 @@ void editorFindCallback(const char *query, int key) {
                 E.col_offset = render_pos - (E.screen_cols - margin);
             if (E.col_offset < 0) E.col_offset = 0;
         }
-        E.find_active = 1;
+        E.find_active = true;
     } else {
         if (E.find_num_matches > 0) {
             E.find_current_idx += direction;
@@ -2148,7 +2153,7 @@ void editorReplace() {
         E.cursor_y = saved_cursor_y;
         E.col_offset = saved_col_offset;
         E.row_offset = saved_row_offset;
-        E.find_active = 0;
+        E.find_active = false;
         free(find_query);
         return;
     }
@@ -2166,13 +2171,13 @@ void editorReplace() {
         E.find_match_cols = NULL;
         E.find_num_matches = 0;
         E.find_current_idx = -1;
-        E.find_active = 0;
+        E.find_active = false;
         return;
     }
 
-    int first = 1;
+    bool first = true;
     int replaced = 0;
-    int done = 0;
+    bool done = false;
     int idx = E.find_current_idx < 0 ? 0 : E.find_current_idx;
     while (!done && E.find_num_matches > 0) {
         editorReplaceJumpToCurrent();
@@ -2183,8 +2188,8 @@ void editorReplace() {
         int key = editorReadKey();
         switch (key) {
             case ESCAPE_CHAR:
-                done = 1;
-                E.select_mode = 0;
+                done = true;
+                E.select_mode = false;
                 break;
             case ARROW_DOWN:
             case ARROW_RIGHT:
@@ -2202,22 +2207,22 @@ void editorReplace() {
             case 'A':
                 if (first) {
                     saveEditorStateForUndo();
-                    first = 0;
+                    first = false;
                 }
                 replaced += editorReplaceAll(replace_query);
-                done = 1;
+                done = true;
                 break;
             case '\r':
             case '\n':
                 if (first) {
                     saveEditorStateForUndo();
-                    first = 0;
+                    first = false;
                 }
                 if (editorReplaceCurrent(find_query, replace_query)) {
                     replaced++;
                     editorScanLineMatches(E.cursor_y, find_query);
                     if (E.find_num_matches == 0) {
-                        done = 1;
+                        done = true;
                     } else {
                         int line = E.cursor_y;
                         int next_idx = -1;
@@ -2263,13 +2268,13 @@ void editorReplace() {
     E.find_match_cols = NULL;
     E.find_num_matches = 0;
     E.find_current_idx = -1;
-    E.find_active = 0;
+    E.find_active = false;
 }
 
 void editorReplaceCallback(const char *query, int key) {
     (void)key;
     if (query == NULL || !query[0]) {
-        E.find_active = 0;
+        E.find_active = false;
         free(E.find_query);
         E.find_query = NULL;
         free(E.find_match_lines);
@@ -2319,7 +2324,7 @@ void editorReplaceCallback(const char *query, int key) {
             if (E.col_offset < 0)
                 E.col_offset = 0;
         }
-        E.find_active = 1;
+        E.find_active = true;
     }
 }
 
@@ -2370,8 +2375,8 @@ void editorReplaceJumpToCurrent() {
     }
 }
 
-int editorReplaceCurrent(const char *find_str, const char *replace_str) {
-    if (!find_str || !replace_str || E.find_num_matches == 0 || E.find_current_idx < 0) return 0;
+bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
+    if (!find_str || !replace_str || E.find_num_matches == 0 || E.find_current_idx < 0) return false;
 
     int row = E.find_match_lines[E.find_current_idx];
     int col = E.find_match_cols[E.find_current_idx];
@@ -2389,11 +2394,11 @@ int editorReplaceCurrent(const char *find_str, const char *replace_str) {
     memcpy(&er->chars[cx], replace_str, replace_len);
 
     editorUpdateRow(er);
-    E.dirty++;
+    E.dirty = true;
     E.cursor_y = row;
     E.cursor_x = cx + replace_len;
     E.preferred_x = E.cursor_x;
-    return 1;
+    return true;
 }
 
 void clipboardCopyToSystem(const char *data, int len) {
@@ -2517,7 +2522,7 @@ void editorCutLine() {
     char msg[STATUS_LENGTH];
     snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
     editorSetStatusMsg(msg);
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorJump() {
@@ -2630,7 +2635,7 @@ void restoreEditorState(const editorState *state) {
     E.select_sy = state->select_sy;
     E.select_ex = state->select_ex;
     E.select_ey = state->select_ey;
-    E.dirty++;
+    E.dirty = true;
 }
 
 void editorUndo() {
@@ -2703,13 +2708,13 @@ char getMatchingBracket(char ch) {
     return 0;
 }
 
-int findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *match_x) {
+bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *match_x) {
     if (cursor_y >= E.num_rows || cursor_x >= E.row[cursor_y].size)
-        return 0;
+        return false;
 
     char bracket = E.row[cursor_y].chars[cursor_x];
     if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
-        return 0;
+        return false;
 
     char match = getMatchingBracket(bracket);
     int direction = (bracket == '(' || bracket == '{' || bracket == '[') ? 1 : -1;
@@ -2743,11 +2748,11 @@ int findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *m
         if (count == 0) {
             *match_y = y;
             *match_x = x;
-            return 1;
+            return true;
         }
     }
 
-    return 0;
+    return false;
 }
 
 void updateMatchBracket() {
@@ -2755,15 +2760,15 @@ void updateMatchBracket() {
     if (findMatchingBracketPosition(E.cursor_y, E.cursor_x, &my, &mx)) {
         E.match_bracket_x = mx;
         E.match_bracket_y = my;
-        E.has_match_bracket = 1;
+        E.has_match_bracket = true;
     } else {
-        E.has_match_bracket = 0;
+        E.has_match_bracket = false;
     }
 }
 
 void editorMouseLeftClick() {
     clampCursorPosition();
-    E.select_mode = 1;
+    E.select_mode = true;
     E.select_sx = E.cursor_x;
     E.select_sy = E.cursor_y;
     E.select_ex = E.cursor_x;
@@ -2781,5 +2786,5 @@ void editorMouseDragClick() {
 void editorMouseLeftRelease() {
     clampCursorPosition();
     if (E.select_ex == E.select_sx && E.select_ey == E.select_sy)
-        E.select_mode = 0;
+        E.select_mode = false;
 }
