@@ -181,6 +181,7 @@ typedef struct {
 typedef struct {
     char *buffer;
     size_t buf_len;
+    bool dirty;
     editorCursor cursor;
     editorSelection sel;
 } editorState;
@@ -261,6 +262,7 @@ void abFree(appendBuffer *);
 void editorOpen(const char *);
 char *editorRowsToString(size_t *);
 void editorSave();
+void panicSave(int);
 void editorQuit();
 
 // row operations
@@ -336,6 +338,9 @@ int main(int argc, char *argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, NULL);
+
+    signal(SIGSEGV, panicSave); // Catch Segfaults
+    signal(SIGABRT, panicSave); // Catch Aborts
 
     editorInit();
     if (argc >= 2)
@@ -1476,7 +1481,7 @@ void editorOpen(const char *filename) {
     }
     free(line);
     fclose(fp);
-    E.buf.dirty = true;
+    E.buf.dirty = false;
 }
 
 char *editorRowsToString(size_t *buf_len) {
@@ -1546,7 +1551,7 @@ void editorSave() {
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
                   O_TRUNC,      // clear the file
-                  file_mode);        // permissions
+                  file_mode);   // permissions
     if (fd == -1) {
         free(tmp_filename);
         char msg[STATUS_LENGTH];
@@ -1575,13 +1580,16 @@ void editorSave() {
         }
     }
 
+    if (success)
+        if (fsync(fd) == -1)
+            success = false;
+
     close(fd);
     if (success) {
         E.buf.dirty = false;
         E.buf.quit_times = QUIT_TIMES;
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
-
         if (rename(tmp_filename, E.buf.filename) == -1) {
             unlink(tmp_filename);
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
@@ -1597,6 +1605,23 @@ void editorSave() {
         editorSetStatusMsg("Can't save! Write error on disk.");
     }
     free(tmp_filename);
+}
+
+void panicSave(int signum) {
+    if (E.buf.filename && E.buf.rows) {
+        char path[BUFFER_SIZE];
+        snprintf(path, sizeof(path), "%s.crash", E.buf.filename);
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd != -1) {
+            for (int i = 0; i < E.buf.num_rows; i++) {
+                write(fd, E.buf.rows[i].chars, E.buf.rows[i].size);
+                write(fd, "\n", 1);
+            }
+            close(fd);
+        }
+    }
+    signal(signum, SIG_DFL);
+    raise(signum);
 }
 
 void editorQuit() {
@@ -2635,6 +2660,7 @@ void saveEditorStateForUndo() {
     state->buffer = editorRowsToString(&state->buf_len);
     state->cursor = E.cursor;
     state->sel = E.sel;
+    state->dirty = E.buf.dirty;
 
     history.undo_in_progress = 1;
     history.last_edit_time = now;
@@ -2660,7 +2686,7 @@ void restoreEditorState(const editorState *state) {
     E.sel = state->sel;
     E.sel.clipboard = saved_clipboard;
     E.cursor = state->cursor;
-    E.buf.dirty = true;
+    E.buf.dirty = state->dirty;
 }
 
 void editorUndo() {
