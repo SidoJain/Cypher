@@ -4,7 +4,6 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
@@ -14,7 +13,6 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <time.h>
-#include <stdarg.h>
 #include <fcntl.h>
 #include <signal.h>
 
@@ -24,6 +22,8 @@
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
+#define is_cntrl(k)         ((k) < 32 || (k) == 127)
+#define is_alnum(k)         (((k) >= 'a' && (k) <= 'z') || ((k) >= 'A' && (k) <= 'Z') || ((k) >= '0' && (k) <= '9'))
 #define APPEND_BUFFER_INIT  {NULL, 0}
 
 #define TAB_SIZE                4
@@ -221,7 +221,7 @@ void editorRefreshScreen();
 void editorDrawRows(appendBuffer *);
 void editorScroll();
 void editorDrawStatusBar(appendBuffer *);
-void editorSetStatusMsg(const char *, ...);
+void editorSetStatusMsg(const char *);
 void editorDrawMsgBar(appendBuffer *);
 void editorManualScreen();
 
@@ -339,7 +339,7 @@ void clearTerminal() {
 }
 
 int isWordChar(int ch) {
-    return isalnum(ch) || ch == '_';
+    return is_alnum(ch) || ch == '_';
 }
 
 long currentMillis() {
@@ -448,8 +448,8 @@ void enableRawMode() {
     raw.c_oflag &= ~(OPOST);                                    // Output flags
     raw.c_cflag |= (CS8);                                       // Set char size to 8 bits/byte
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);            // Local flags
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 1;
 
     write(STDOUT_FILENO, ENTER_ALTERNATE_SCREEN, sizeof(ENTER_ALTERNATE_SCREEN) - 1);
     write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
@@ -470,6 +470,7 @@ int editorReadKey() {
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
         if (nread == -1 && errno == EAGAIN) continue;
         if (nread == -1 && errno == EINTR) return 0;
+        if (nread == 0) return 0;
         die("read");
     }
 
@@ -682,7 +683,9 @@ void editorProcessKeypress() {
             {
                 char sizebuf[SMALL_BUFFER_SIZE];
                 humanReadableSize(E.paste_len, sizebuf, sizeof(sizebuf));
-                editorSetStatusMsg("Pasted %s", sizebuf);
+                char msg[STATUS_LENGTH];
+                snprintf(msg, sizeof(msg), "Pasted %s", sizebuf);
+                editorSetStatusMsg(msg);
             }
             break;
 
@@ -886,7 +889,7 @@ void editorProcessKeypress() {
             break;
 
         default:
-            if (!iscntrl(ch)) {
+            if (!is_cntrl(ch)) {
                 if (E.is_pasting) E.paste_len++;
 
                 saveEditorStateForUndo();
@@ -988,7 +991,9 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
     }
 
     while (1) {
-        editorSetStatusMsg(prompt, buf);
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), prompt, buf);
+        editorSetStatusMsg(msg);
         editorRefreshScreen();
 
         int ch = editorReadKey();
@@ -1008,7 +1013,7 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
                     callback(buf, ch);
                 return buf;
             }
-        } else if (!iscntrl(ch) && ch < 128) {
+        } else if (!is_cntrl(ch) && ch < 128) {
             if (buf_len == buf_size - 1) {
                 buf_size *= 2;
                 buf = safeRealloc(buf, buf_size);
@@ -1278,11 +1283,8 @@ void editorDrawStatusBar(appendBuffer *ab) {
     abAppend(ab, REMOVE_GRAPHICS NEW_LINE, sizeof(REMOVE_GRAPHICS NEW_LINE) - 1);
 }
 
-void editorSetStatusMsg(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(E.status_msg, sizeof(E.status_msg), fmt, ap);
-    va_end(ap);
+void editorSetStatusMsg(const char *msg) {
+    snprintf(E.status_msg, sizeof(E.status_msg), "%s", msg);
     E.status_msg_time = time(NULL);
 }
 
@@ -1490,7 +1492,9 @@ void editorSave() {
     }
 
     if (new_file && access(E.filename, F_OK) == 0 && E.save_times != 0) {
-        editorSetStatusMsg("File exists! Press Ctrl-S %d more time%s to overwrite.", E.save_times, E.save_times == 1 ? "" : "s");
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "File exists! Press Ctrl-S %d more time%s to overwrite.", E.save_times, E.save_times == 1 ? "" : "s");
+        editorSetStatusMsg(msg);
         E.save_times--;
         return;
     }
@@ -1506,7 +1510,9 @@ void editorSave() {
                   0644);        // permissions
     if (fd == -1) {
         free(tmp_filename);
-        editorSetStatusMsg("Can't save! I/O error: %s", strerror(errno));
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "Can't save! I/O error: %s", strerror(errno));
+        editorSetStatusMsg(msg);
         return;
     }
 
@@ -1541,8 +1547,11 @@ void editorSave() {
             unlink(tmp_filename);
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
         }
-        else
-            editorSetStatusMsg("%s written to disk", sizebuf);
+        else {
+            char msg[STATUS_LENGTH];
+            snprintf(msg, sizeof(msg), "%s written to disk", sizebuf);
+            editorSetStatusMsg(msg);
+        }
     }
     else {
         unlink(tmp_filename);
@@ -1553,7 +1562,9 @@ void editorSave() {
 
 void editorQuit() {
     if (E.dirty && E.quit_times > 0) {
-        editorSetStatusMsg("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", E.quit_times, E.quit_times == 1 ? "" : "s");
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", E.quit_times, E.quit_times == 1 ? "" : "s");
+        editorSetStatusMsg(msg);
         E.quit_times--;
         return;
     }
@@ -1601,7 +1612,7 @@ void editorUpdateRow(editorRow *row) {
                 row->render[idx++] = ' ';
         }
         else {
-            if (iscntrl(row->chars[i]))
+            if (is_cntrl(row->chars[i]))
                 row->render[idx++] = '?';
             else
                 row->render[idx++] = row->chars[i];
@@ -1870,7 +1881,9 @@ void editorSelectAll() {
         E.cursor_x = E.select_ex;
         E.cursor_y = E.select_ey;
 
-        editorSetStatusMsg("Selected all %d lines", E.num_rows);
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "Selected all %d lines", E.num_rows);
+        editorSetStatusMsg(msg);
     }
 }
 
@@ -2002,7 +2015,7 @@ void editorFindCallback(const char *query, int key) {
     if (key == ARROW_RIGHT || key == ARROW_DOWN) direction = 1;
     else if (key == ARROW_LEFT || key == ARROW_UP) direction = -1;
     else if (key == BACKSPACE) direction = 1;
-    else if (iscntrl(key)) return;
+    else if (is_cntrl(key)) return;
     else direction = 1;
 
     if (E.find_query == NULL || strcmp(E.find_query, query) != 0) {
@@ -2235,7 +2248,9 @@ void editorReplace() {
             default:
                 break;
         }
-        editorSetStatusMsg("Replaced %d occurrence%s", replaced, replaced == 1 ? "" : "s");
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "Replaced %d occurrence%s", replaced, replaced == 1 ? "" : "s");
+        editorSetStatusMsg(msg);
     }
 
     free(replace_query);
@@ -2440,7 +2455,10 @@ void editorCopySelection() {
     if (E.clipboard) {
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(len, sizebuf, sizeof(sizebuf));
-        editorSetStatusMsg("Copied %s", sizebuf);
+
+        char msg[STATUS_LENGTH];
+        snprintf(msg, sizeof(msg), "Copied %s", sizebuf);
+        editorSetStatusMsg(msg);
         clipboardCopyToSystem(E.clipboard, len);
     }
 }
@@ -2461,7 +2479,10 @@ void editorCutSelection() {
 
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
-    editorSetStatusMsg("Cut %s", sizebuf);
+
+    char msg[STATUS_LENGTH];
+    snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
+    editorSetStatusMsg(msg);
 }
 
 void editorCutLine() {
@@ -2492,7 +2513,10 @@ void editorCutLine() {
 
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(strlen(E.clipboard), sizebuf, sizeof(sizebuf));
-    editorSetStatusMsg("Cut %s", sizebuf);
+
+    char msg[STATUS_LENGTH];
+    snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
+    editorSetStatusMsg(msg);
     E.dirty++;
 }
 
