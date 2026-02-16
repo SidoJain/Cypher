@@ -180,14 +180,8 @@ typedef struct {
 typedef struct {
     char *buffer;
     size_t buf_len;
-    int cursor_x;
-    int preferred_x;
-    int cursor_y;
-    int select_mode;
-    int select_sx;
-    int select_sy;
-    int select_ex;
-    int select_ey;
+    editorCursor cursor;
+    editorSelection sel;
 } editorState;
 
 typedef struct {
@@ -2077,8 +2071,8 @@ void editorFindCallback(const char *query, int key) {
             E.find.current_idx = 0;
             int row = E.find.match_lines[0];
             int col = E.find.match_cols[0];
-            E.cursor.y = row;
             E.cursor.x = col;
+            E.cursor.y = row;
             E.view.row_offset = E.buf.num_rows;
             E.cursor.preferred_x = E.cursor.x;
 
@@ -2104,8 +2098,8 @@ void editorFindCallback(const char *query, int key) {
 
             int row = E.find.match_lines[E.find.current_idx];
             int col = E.find.match_cols[E.find.current_idx];
-            E.cursor.y = row;
             E.cursor.x = col;
+            E.cursor.y = row;
             E.cursor.preferred_x = E.cursor.x;
 
             if (row < E.view.row_offset)
@@ -2340,7 +2334,7 @@ void editorReplaceCallback(const char *query, int key) {
             int row = E.find.match_lines[0];
             int col = E.find.match_cols[0];
             E.cursor.y = row;
-            E.cursor.x = editorRowRxToCx(&E.buf.rows[row], col);
+            E.cursor.x = col;
             E.view.row_offset = (row >= E.view.screen_rows) ? row - E.view.screen_rows + MARGIN : 0;
             int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
             int margin = query_len + MARGIN;
@@ -2387,8 +2381,8 @@ void editorReplaceJumpToCurrent() {
     if (E.find.num_matches > 0 && E.find.current_idx >= 0 && E.find.current_idx < E.find.num_matches) {
         int row = E.find.match_lines[E.find.current_idx];
         int col = E.find.match_cols[E.find.current_idx];
+        E.cursor.x = col;
         E.cursor.y = row;
-        E.cursor.x = editorRowRxToCx(&E.buf.rows[row], col);
         E.cursor.preferred_x = E.cursor.x;
         E.view.row_offset = (row >= E.view.screen_rows) ? row - E.view.screen_rows + MARGIN : 0;
         int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
@@ -2588,8 +2582,8 @@ void editorJumpCallback(const char *buf, int key) {
     if (col < 0) col = 0;
     if (row >= 0 && row < E.buf.num_rows && col > E.buf.rows[row].size) col = E.buf.rows[row].size;
 
-    E.cursor.y = row;
     E.cursor.x = col;
+    E.cursor.y = row;
     E.cursor.preferred_x = col;
     editorScroll();
 }
@@ -2603,35 +2597,31 @@ void saveEditorStateForUndo() {
     long now = currentMillis();
 
     int should_save = !history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT);
-    if (should_save) {
-        for (int i = 0; i <= history.redo_top; i++)
-            freeEditorState(&history.redo_stack[i]);
-        history.redo_top = -1;
-
-        if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
-            freeEditorState(&history.undo_stack[0]);
-            memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
-            history.undo_stack[history.undo_top].buffer = NULL;
-            history.undo_top--; 
-        }
-
-        history.undo_top++;
-        editorState *state = &history.undo_stack[history.undo_top];
-        freeEditorState(state);
-
-        state->buffer = editorRowsToString(&state->buf_len);
-        state->cursor_x = E.cursor.x;
-        state->cursor_y = E.cursor.y;
-        state->preferred_x = E.cursor.preferred_x;
-        state->select_mode = E.sel.active;
-        state->select_sx = E.sel.sx;
-        state->select_sy = E.sel.sy;
-        state->select_ex = E.sel.ex;
-        state->select_ey = E.sel.ey;
-
-        history.undo_in_progress = 1;
+    if (!should_save) {
+        history.last_edit_time = now;
+        return;
     }
 
+    for (int i = 0; i <= history.redo_top; i++)
+        freeEditorState(&history.redo_stack[i]);
+    history.redo_top = -1;
+
+    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
+        freeEditorState(&history.undo_stack[0]);
+        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
+        history.undo_stack[history.undo_top].buffer = NULL;
+        history.undo_top--; 
+    }
+
+    history.undo_top++;
+    editorState *state = &history.undo_stack[history.undo_top];
+    freeEditorState(state);
+
+    state->buffer = editorRowsToString(&state->buf_len);
+    state->cursor = E.cursor;
+    state->sel = E.sel;
+
+    history.undo_in_progress = 1;
     history.last_edit_time = now;
 }
 
@@ -2651,14 +2641,10 @@ void restoreEditorState(const editorState *state) {
         }
     }
 
-    E.cursor.x = state->cursor_x;
-    E.cursor.y = state->cursor_y;
-    E.cursor.preferred_x = state->preferred_x;
-    E.sel.active = state->select_mode;
-    E.sel.sx = state->select_sx;
-    E.sel.sy = state->select_sy;
-    E.sel.ex = state->select_ex;
-    E.sel.ey = state->select_ey;
+    char *saved_clipboard = E.sel.clipboard;
+    E.sel = state->sel;
+    E.sel.clipboard = saved_clipboard;
+    E.cursor = state->cursor;
     E.buf.dirty = true;
 }
 
@@ -2674,14 +2660,8 @@ void editorUndo() {
         freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
-        state->cursor_x = E.cursor.x;
-        state->cursor_y = E.cursor.y;
-        state->preferred_x = E.cursor.preferred_x;
-        state->select_mode = E.sel.active;
-        state->select_sx = E.sel.sx;
-        state->select_sy = E.sel.sy;
-        state->select_ex = E.sel.ex;
-        state->select_ey = E.sel.ey;
+        state->cursor = E.cursor;
+        state->sel = E.sel;
     }
 
     editorState *undo_st = &history.undo_stack[history.undo_top];
@@ -2703,14 +2683,8 @@ void editorRedo() {
         freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
-        state->cursor_x = E.cursor.x;
-        state->cursor_y = E.cursor.y;
-        state->preferred_x = E.cursor.preferred_x;
-        state->select_mode = E.sel.active;
-        state->select_sx = E.sel.sx;
-        state->select_sy = E.sel.sy;
-        state->select_ex = E.sel.ex;
-        state->select_ey = E.sel.ey;
+        state->cursor = E.cursor;
+        state->sel = E.sel;
     }
 
     editorState *redo_st = &history.redo_stack[history.redo_top];
