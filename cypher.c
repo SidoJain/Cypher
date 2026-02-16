@@ -24,7 +24,6 @@
 #define CTRL_KEY(k)         ((k) & 0x1f)
 #define is_cntrl(k)         ((k) < 32 || (k) == 127)
 #define is_alnum(k)         (((k) >= 'a' && (k) <= 'z') || ((k) >= 'A' && (k) <= 'Z') || ((k) >= '0' && (k) <= '9'))
-#define APPEND_BUFFER_INIT  {NULL, 0}
 
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
@@ -175,6 +174,7 @@ typedef struct {
 typedef struct {
     char *b;
     int len;
+    int capacity;
 } appendBuffer;
 
 typedef struct {
@@ -1154,7 +1154,11 @@ void editorDrawWelcomeMessage(appendBuffer *ab) {
 void editorRefreshScreen() {
     editorScroll();
 
-    appendBuffer ab = APPEND_BUFFER_INIT;
+    appendBuffer ab = {
+        .b = NULL,
+        .len = 0,
+        .capacity = 0,
+    };
     abAppend(&ab, HIDE_CURSOR CURSOR_RESET, sizeof(HIDE_CURSOR CURSOR_RESET) - 1);
 
     editorDrawRows(&ab);
@@ -1434,10 +1438,15 @@ void editorCleanup() {
 }
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
-    char *new = safeRealloc(ab->b, ab->len + len);
+    if (ab->len + len >= ab->capacity) {
+        int new_capacity = ab->capacity == 0 ? 1024 : ab->capacity * 2;
+        while (new_capacity < ab->len + len)
+            new_capacity *= 2;
 
-    memcpy(&new[ab->len], str, len);
-    ab->b = new;
+        ab->b = safeRealloc(ab->b, new_capacity);
+        ab->capacity = new_capacity;
+    }
+    memcpy(&ab->b[ab->len], str, len);
     ab->len += len;
 }
 
