@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <time.h>
@@ -1536,11 +1537,16 @@ void editorSave() {
     size_t len = strlen(E.buf.filename) + 5;
     char *tmp_filename = safeMalloc(len);
     snprintf(tmp_filename, len, "%s.tmp", E.buf.filename);
+
+    mode_t file_mode = 0644;
+    struct stat st;
+    if (stat(E.buf.filename, &st) == 0)
+        file_mode = st.st_mode; // Keep existing permissions
     int fd = open(tmp_filename,
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
                   O_TRUNC,      // clear the file
-                  0644);        // permissions
+                  file_mode);        // permissions
     if (fd == -1) {
         free(tmp_filename);
         char msg[STATUS_LENGTH];
