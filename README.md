@@ -9,12 +9,16 @@ This README file has been completely written using Cypher.
 - **File Editing**
   - Open and edit text files directly from the terminal.
   - Save changed (`Ctrl-S`) with overwrite support.
-  - Time based Undo (`Ctrl-Z`) and Redo (`Ctrl-Y`) functionality.
+
+- **Undo and Redo Engine**
+  - Time-based Batching: Groups continuous typing or backspacing into a single undo action.
+  - Macro Transactions: Massive operations (like pasting a huge block or a 50-item "Replace All") are grouped and undone in a single keystroke.
+  - Save State Tracking: Undoing your way back to the last saved state accurately removes the (modified) flag.
 
 - **Navigation**
-  - Arrow keys for cursor movement.
-  - Home/End keys to jump to start/end of a line.
-  - Page Up/Page Down for fast scrolling.
+  - `Arrow keys` for cursor movement.
+  - `Home/End` keys to jump to start/end of a line.
+  - `Page Up/Page Down` for fast scrolling.
   - `Ctrl-ArrowKeys` for fast navigation.
   - `Ctrl-G` to jump to a specific line.
 
@@ -31,6 +35,10 @@ This README file has been completely written using Cypher.
   - Paste command (`Ctrl-V`) from clipboard.
   - Copy (`Ctrl-C`) and Cut (`Ctrl-X`) commands to clipboard.
   - Move whole rows up (`Alt-Up`) or down (`Alt-Down`).
+  - Smart Bracket Assist: Auto-closes brackets/quotes.
+  - Smart Indentation: Pressing Enter between brackets automatically indents the new line and pushes the closing bracket down.
+  - Bracket Matching: Highlights the corresponding open/close bracket when your cursor is over one.
+  - Row Manipulation: Move rows up/down (`Alt-Up/Down`) or duplicate them (`Shift-Alt-Up/Down`).
 
 - **Search & Replace**
   - Incremental search (`Ctrl-F`) with real time navigation between matches.
@@ -44,7 +52,7 @@ This README file has been completely written using Cypher.
 ## Keyboard Shortcuts
 
 | Shortcut                              | Action                            |
-|---------------------------------------|--------                           |
+|---------------------------------------|-----------------------------------|
 | `Ctrl-Q`                              | Quit editor                       |
 | `Ctrl-S`                              | Save current file                 |
 | `Ctrl-F`                              | Search in file                    |
