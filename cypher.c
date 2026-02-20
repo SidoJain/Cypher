@@ -20,18 +20,18 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.2.5"
+#define CYPHER_VERSION      "1.3.0"
 #define EMPTY_LINE_SYMBOL   "~"
 
-#define CTRL_KEY(k)         ((k) & 0x1f)
-#define is_cntrl(k)         ((k) < 32 || (k) == 127)
-#define is_alnum(k)         (((k) >= 'a' && (k) <= 'z') || ((k) >= 'A' && (k) <= 'Z') || ((k) >= '0' && (k) <= '9'))
+#define CTRL_KEY(k)     ((k) & 0x1f)
+#define is_cntrl(k)     ((k) < 32 || (k) == 127)
+#define is_alnum(k)     (((k) >= 'a' && (k) <= 'z') || ((k) >= 'A' && (k) <= 'Z') || ((k) >= '0' && (k) <= '9'))
 
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
 #define SAVE_TIMES              2
 #define UNDO_REDO_STACK_SIZE    100
-#define UNDO_TIMEOUT            1000
+#define UNDO_TIMEOUT_MS         1000
 #define STATUS_LENGTH           80
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
@@ -100,21 +100,37 @@ typedef enum {
     MOUSE_LEFT_RELEASE,
     PASTE_START,
     PASTE_END
-} editorKey;
+} EditorKey;
+
+typedef enum {
+    BUFFER_ORIGINAL = 0,
+    BUFFER_ADD = 1
+} BufferSource;
 
 typedef struct {
-    int size;
-    int rsize;
-    char *chars;
-    char *render;
-} editorRow;
+    BufferSource source;
+    size_t start;
+    size_t length;
+} Piece;
+
+typedef struct {
+    char *orig_buf;
+    size_t orig_len;
+    char *add_buf;
+    size_t add_len;
+    size_t add_capacity;
+    Piece *pieces;
+    size_t num_pieces;
+    size_t piece_capacity;
+    size_t logical_size;
+} PieceTable;
 
 typedef struct {
     int x;
     int y;
     int render_x;
     int preferred_x;
-} editorCursor;
+} EditorCursor;
 
 typedef struct {
     int screen_rows;
@@ -122,17 +138,18 @@ typedef struct {
     int row_offset;
     int col_offset;
     volatile sig_atomic_t resized;
-} editorView;
+} EditorView;
 
 typedef struct {
-    editorRow *rows;
-    int num_rows;
-    int row_capacity;
+    PieceTable pt;
+    size_t *line_offsets;
+    int num_lines;
+    int line_capacity;
     char *filename;
     bool dirty;
     int save_times;
     int quit_times;
-} editorBuffer;
+} EditorBuffer;
 
 typedef struct {
     bool active;
@@ -143,7 +160,7 @@ typedef struct {
     char *clipboard;
     bool is_pasting;
     int paste_len;
-} editorSelection;
+} EditorSelection;
 
 typedef struct {
     bool active;
@@ -152,7 +169,7 @@ typedef struct {
     int *match_cols;
     int num_matches;
     int current_idx;
-} editorFinder;
+} EditorFinder;
 
 typedef struct {
     char status_msg[STATUS_LENGTH];
@@ -161,45 +178,45 @@ typedef struct {
     int bracket_x;
     int bracket_y;
     bool has_bracket;
-} editorSystem;
+} EditorSystem;
 
 typedef struct {
-    editorCursor cursor;
-    editorView view;
-    editorBuffer buf;
-    editorSelection sel;
-    editorFinder find;
-    editorSystem sys;
-} editorConfig;
+    EditorCursor cursor;
+    EditorView view;
+    EditorBuffer buf;
+    EditorSelection sel;
+    EditorFinder find;
+    EditorSystem sys;
+} EditorConfig;
 
 typedef struct {
     char *b;
     int len;
     int capacity;
-} appendBuffer;
+} AppendBuffer;
 
 typedef struct {
     char *buffer;
     size_t buf_len;
     bool dirty;
-    editorCursor cursor;
-    editorSelection sel;
-} editorState;
+    EditorCursor cursor;
+    EditorSelection sel;
+} EditorState;
 
 typedef struct {
-    editorState undo_stack[UNDO_REDO_STACK_SIZE];
+    EditorState undo_stack[UNDO_REDO_STACK_SIZE];
     int undo_top;
-    editorState redo_stack[UNDO_REDO_STACK_SIZE];
+    EditorState redo_stack[UNDO_REDO_STACK_SIZE];
     int redo_top;
     long last_edit_time;
     int undo_in_progress;
-} editorUndoRedo;
+} EditorUndoRedo;
 
 /*** Global Data ***/
 
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-editorConfig E;
-editorUndoRedo history = {
+EditorConfig E;
+EditorUndoRedo history = {
     .undo_top = -1,
     .redo_top = -1,
     .last_edit_time = 0,
@@ -233,6 +250,7 @@ int getCursorPosition(int *, int *);
 
 // input
 void editorProcessKeypress();
+size_t editorGetLineLength(EditorBuffer *, int);
 void editorMoveCursor(int);
 char *editorPrompt(char *, void (*)(const char *, int), char *);
 void editorMoveWordLeft();
@@ -241,13 +259,13 @@ void editorScrollPageUp(int);
 void editorScrollPageDown(int);
 
 // output
-void editorDrawWelcomeMessage(appendBuffer *);
+void editorDrawWelcomeMessage(AppendBuffer *);
 void editorRefreshScreen();
-void editorDrawRows(appendBuffer *);
+void editorDrawRows(AppendBuffer *);
 void editorScroll();
-void editorDrawStatusBar(appendBuffer *);
+void editorDrawStatusBar(AppendBuffer *);
 void editorSetStatusMsg(const char *);
-void editorDrawMsgBar(appendBuffer *);
+void editorDrawMsgBar(AppendBuffer *);
 void editorManualScreen();
 
 // editor
@@ -255,8 +273,8 @@ void editorInit();
 void editorCleanup();
 
 // append buffer
-void abAppend(appendBuffer *, const char *, int);
-void abFree(appendBuffer *);
+void abAppend(AppendBuffer *, const char *, int);
+void abFree(AppendBuffer *);
 
 // file i/o
 void editorOpen(const char *);
@@ -266,15 +284,19 @@ void panicSave(int);
 void editorQuit();
 
 // row operations
-void editorInsertRow(int, const char *, size_t);
-void editorUpdateRow(editorRow *);
-int editorRowCxToRx(const editorRow *, int);
-int editorRowRxToCx(const editorRow *, int);
-void editorRowInsertChar(editorRow *, int, int);
-void editorRowDeleteChar(editorRow *, int);
-void editorFreeRow(editorRow *);
-void editorDeleteRow(int);
-void editorRowAppendString(editorRow *, const char *, size_t);
+void ptInit(PieceTable *, const char *, size_t);
+char *ptGetText(PieceTable *);
+void ptFree(PieceTable *);
+void ptInsert(PieceTable *, size_t, const char *, size_t);
+void ptDelete(PieceTable *, size_t, size_t);
+bool ptFindPiece(PieceTable *, size_t, size_t *, size_t *);
+void editorUpdateLineOffsets(EditorBuffer *);
+void ptReadLogical(PieceTable *, size_t, size_t, char *);
+char *editorGetLine(EditorBuffer *, int, size_t *);
+int editorLineCxToRx(const char *, int, int);
+int editorLineRxToCx(const char *, int, int);
+size_t editorGetLogicalOffset(EditorBuffer *, int, int);
+void editorOffsetToRowCol(EditorBuffer *, size_t, int *, int *);
 void editorMoveRowUp();
 void editorMoveRowDown();
 void editorCopyRowUp();
@@ -312,9 +334,9 @@ void editorJump();
 void editorJumpCallback(const char *, int);
 
 // undo-redo operations
-void freeEditorState(editorState *);
+void freeEditorState(EditorState *);
 void saveEditorStateForUndo();
-void restoreEditorState(const editorState *);
+void restoreEditorState(const EditorState *);
 void editorUndo();
 void editorRedo();
 
@@ -390,7 +412,7 @@ char getClosingChar(char ch) {
 }
 
 void clampCursorPosition() {
-    if (E.buf.num_rows == 0) {
+    if (E.buf.num_lines == 0) {
         E.cursor.x = 0;
         E.cursor.y = 0;
         return;
@@ -398,16 +420,17 @@ void clampCursorPosition() {
 
     if (E.cursor.y < 0)
         E.cursor.y = 0;
-    else if (E.cursor.y >= E.buf.num_rows) {
-        E.cursor.y = E.buf.num_rows - 1;
-        E.cursor.x = E.buf.rows[E.cursor.y].size;
+    else if (E.cursor.y >= E.buf.num_lines) {
+        E.cursor.y = E.buf.num_lines - 1;
+        E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
         return;
     }
 
+    int current_line_len = editorGetLineLength(&E.buf, E.cursor.y);
     if (E.cursor.x < 0)
         E.cursor.x = 0;
-    else if (E.cursor.x > E.buf.rows[E.cursor.y].size)
-        E.cursor.x = E.buf.rows[E.cursor.y].size;
+    else if (E.cursor.x > current_line_len)
+        E.cursor.x = current_line_len;
 }
 
 void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
@@ -526,7 +549,7 @@ int editorReadKey() {
 
                     x--;
                     y--;
-                    int motion = (b & SMALL_BUFFER_SIZE);
+                    int motion = (b & 32);
                     if ((b & 3) == 0) {
                         E.cursor.x = x + E.view.col_offset;
                         E.cursor.y = y + E.view.row_offset;
@@ -762,8 +785,8 @@ void editorProcessKeypress() {
             break;
         case END_KEY:
             E.sel.active = false;
-            if (E.cursor.y < E.buf.num_rows) {
-                E.cursor.x = E.buf.rows[E.cursor.y].size;
+            if (E.cursor.y < E.buf.num_lines) {
+                E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
                 E.cursor.preferred_x = E.cursor.x;
             }
             updateMatchBracket();
@@ -771,7 +794,6 @@ void editorProcessKeypress() {
 
         case DEL_KEY:
             saveEditorStateForUndo();
-            editorMoveCursor(ARROW_RIGHT);
             editorDeleteChar(0);
             updateMatchBracket();
             break;
@@ -855,8 +877,8 @@ void editorProcessKeypress() {
                 E.sel.sx = E.cursor.x;
                 E.sel.sy = E.cursor.y;
             }
-            if (E.cursor.y < E.buf.num_rows)
-                E.cursor.x = E.buf.rows[E.cursor.y].size;
+            if (E.cursor.y < E.buf.num_lines)
+                E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
             E.sel.ex = E.cursor.x;
             E.sel.ey = E.cursor.y;
             updateMatchBracket();
@@ -873,21 +895,21 @@ void editorProcessKeypress() {
             break;
 
         case ALT_ARROW_UP:
-            saveEditorStateForUndo();
             editorMoveRowUp();
+            updateMatchBracket();
             break;
         case ALT_ARROW_DOWN:
-            saveEditorStateForUndo();
             editorMoveRowDown();
+            updateMatchBracket();
             break;
 
         case ALT_SHIFT_ARROW_UP:
-            saveEditorStateForUndo();
             editorCopyRowUp();
+            updateMatchBracket();
             break;
         case ALT_SHIFT_ARROW_DOWN:
-            saveEditorStateForUndo();
             editorCopyRowDown();
+            updateMatchBracket();
             break;
 
         case MOUSE_SCROLL_UP:
@@ -948,47 +970,63 @@ void editorProcessKeypress() {
     }
 }
 
-void editorMoveCursor(int key) {
-    if (E.buf.num_rows == 0)
-        return;
-    editorRow *row = (E.cursor.y >= E.buf.num_rows) ? NULL : &E.buf.rows[E.cursor.y];
+size_t editorGetLineLength(EditorBuffer *buf, int line_idx) {
+    if (line_idx < 0 || line_idx >= buf->num_lines) return 0;
 
+    size_t start_offset = buf->line_offsets[line_idx];
+    size_t end_offset;
+    if (line_idx == buf->num_lines - 1)
+        end_offset = buf->pt.logical_size;
+    else
+        end_offset = buf->line_offsets[line_idx + 1] - 1;
+
+    return end_offset - start_offset;
+}
+
+void editorMoveCursor(int key) {
+    if (E.buf.num_lines == 0)
+        return;
+
+    int current_line_len = editorGetLineLength(&E.buf, E.cursor.y);
     switch (key) {
         case ARROW_LEFT:
             if (E.cursor.x != 0) {
                 E.cursor.x--;
             } else if (E.cursor.y > 0) {
                 E.cursor.y--;
-                E.cursor.x = E.buf.rows[E.cursor.y].size;
+                E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
             }
             E.cursor.preferred_x = E.cursor.x;
             break;
+
         case ARROW_RIGHT:
-            if (row && E.cursor.x < row->size) {
+            if (E.cursor.x < current_line_len) {
                 E.cursor.x++;
-            } else if (row && E.cursor.x == row->size && E.cursor.y < E.buf.num_rows - 1) {
+            } else if (E.cursor.x == current_line_len && E.cursor.y < E.buf.num_lines - 1) {
                 E.cursor.y++;
                 E.cursor.x = 0;
             }
             E.cursor.preferred_x = E.cursor.x;
             break;
+
         case ARROW_DOWN:
-            if (E.cursor.y < E.buf.num_rows - 1) {
+            if (E.cursor.y < E.buf.num_lines - 1) {
                 E.cursor.y++;
-                row = (E.cursor.y >= E.buf.num_rows) ? NULL : &E.buf.rows[E.cursor.y];
+                int next_line_len = editorGetLineLength(&E.buf, E.cursor.y);
                 if (E.cursor.preferred_x < 0) E.cursor.preferred_x = E.cursor.x;
-                E.cursor.x = row && row->size > E.cursor.preferred_x ? E.cursor.preferred_x : (row ? row->size : 0);
+                E.cursor.x = next_line_len > E.cursor.preferred_x ? E.cursor.preferred_x : next_line_len;
             } else {
-                E.cursor.x = E.buf.rows[E.cursor.y].size;
-                E.cursor.preferred_x = E.buf.rows[E.cursor.y].size;
+                E.cursor.x = current_line_len;
+                E.cursor.preferred_x = current_line_len;
             }
             break;
+
         case ARROW_UP:
             if (E.cursor.y > 0) {
                 E.cursor.y--;
-                row = (E.cursor.y >= E.buf.num_rows) ? NULL : &E.buf.rows[E.cursor.y];
+                int prev_line_len = editorGetLineLength(&E.buf, E.cursor.y);
                 if (E.cursor.preferred_x < 0) E.cursor.preferred_x = E.cursor.x;
-                E.cursor.x = row && row->size > E.cursor.preferred_x ? E.cursor.preferred_x : (row ? row->size : 0);
+                E.cursor.x = prev_line_len > E.cursor.preferred_x ? E.cursor.preferred_x : prev_line_len;
             } else {
                 E.cursor.x = 0;
                 E.cursor.preferred_x = 0;
@@ -996,10 +1034,9 @@ void editorMoveCursor(int key) {
             break;
     }
 
-    row = (E.cursor.y >= E.buf.num_rows) ? NULL : &E.buf.rows[E.cursor.y];
-    int row_len = row ? row->size : 0;
-    if (E.cursor.x > row_len)
-        E.cursor.x = row_len;
+    current_line_len = editorGetLineLength(&E.buf, E.cursor.y);
+    if (E.cursor.x > current_line_len)
+        E.cursor.x = current_line_len;
 }
 
 char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *initial) {
@@ -1057,86 +1094,71 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
 }
 
 void editorMoveWordLeft() {
-    if (E.cursor.y >= E.buf.num_rows) return;
+    if (E.cursor.y >= E.buf.num_lines) return;
+    size_t line_len;
+    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+    if (!line_text) return;
 
-    while (E.cursor.x > 0 && !isWordChar(E.buf.rows[E.cursor.y].chars[E.cursor.x - 1]))
-        E.cursor.x--;
-    while (E.cursor.x > 0 && isWordChar(E.buf.rows[E.cursor.y].chars[E.cursor.x - 1]))
-        E.cursor.x--;
+    while (E.cursor.x > 0 && !isWordChar(line_text[E.cursor.x - 1])) E.cursor.x--;
+    while (E.cursor.x > 0 && isWordChar(line_text[E.cursor.x - 1])) E.cursor.x--;
     E.cursor.preferred_x = E.cursor.x;
+    free(line_text);
 }
 
 void editorMoveWordRight() {
-    if (E.cursor.y >= E.buf.num_rows) return;
+    if (E.cursor.y >= E.buf.num_lines) return;
+    size_t line_len;
+    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+    if (!line_text) return;
 
-    int len = E.buf.rows[E.cursor.y].size;
-    while (E.cursor.x < len && !isWordChar(E.buf.rows[E.cursor.y].chars[E.cursor.x]))
-        E.cursor.x++;
-    while (E.cursor.x < len && isWordChar(E.buf.rows[E.cursor.y].chars[E.cursor.x]))
-        E.cursor.x++;
+    while ((size_t)E.cursor.x < line_len && !isWordChar(line_text[E.cursor.x])) E.cursor.x++;
+    while ((size_t)E.cursor.x < line_len && isWordChar(line_text[E.cursor.x])) E.cursor.x++;
     E.cursor.preferred_x = E.cursor.x;
+    free(line_text);
 }
 
 void editorScrollPageUp(int scroll_amount) {
-    if (E.buf.num_rows == 0)
-        return;
+    if (E.buf.num_lines == 0) return;
 
     if (E.view.row_offset > 0) {
-        if (scroll_amount > E.view.row_offset)
-            scroll_amount = E.view.row_offset;
-
+        if (scroll_amount > E.view.row_offset) scroll_amount = E.view.row_offset;
         E.view.row_offset -= scroll_amount;
         E.cursor.y -= scroll_amount;
 
-        if (E.cursor.y < 0)
-            E.cursor.y = 0;
-
-        if (E.cursor.y < E.buf.num_rows) {
-            int row_len = E.buf.rows[E.cursor.y].size;
-            if (E.cursor.preferred_x > row_len)
-                E.cursor.x = row_len;
-            else
-                E.cursor.x = E.cursor.preferred_x;
+        if (E.cursor.y < 0) E.cursor.y = 0;
+        if (E.cursor.y < E.buf.num_lines) {
+            int row_len = editorGetLineLength(&E.buf, E.cursor.y);
+            if (E.cursor.preferred_x > row_len) E.cursor.x = row_len;
+            else E.cursor.x = E.cursor.preferred_x;
         }
     } else {
-        if (E.cursor.y != 0)
-            E.cursor.y = 0;
-        else {
-            E.cursor.x = 0;
-            E.cursor.preferred_x = 0;
-        }
+        E.cursor.y = 0;
+        E.cursor.x = 0;
+        E.cursor.preferred_x = 0;
     }
 }
 
 void editorScrollPageDown(int scroll_amount) {
-    if (E.buf.num_rows == 0)
-        return;
+    if (E.buf.num_lines == 0) return;
 
-    if (E.view.row_offset < E.buf.num_rows - E.view.screen_rows) {
+    if (E.view.row_offset < E.buf.num_lines - E.view.screen_rows) {
         E.view.row_offset += scroll_amount;
         E.cursor.y += scroll_amount;
 
-        if (E.cursor.y >= E.buf.num_rows)
-            E.cursor.y = E.buf.num_rows - 1;
-
-        if (E.cursor.y < E.buf.num_rows) {
-            int row_len = E.buf.rows[E.cursor.y].size;
-            if (E.cursor.preferred_x > row_len)
-                E.cursor.x = row_len;
-            else
-                E.cursor.x = E.cursor.preferred_x;
+        if (E.cursor.y >= E.buf.num_lines) E.cursor.y = E.buf.num_lines - 1;
+        if (E.cursor.y < E.buf.num_lines) {
+            int row_len = editorGetLineLength(&E.buf, E.cursor.y);
+            if (E.cursor.preferred_x > row_len) E.cursor.x = row_len;
+            else E.cursor.x = E.cursor.preferred_x;
         }
     } else {
-        if (E.cursor.y != E.buf.num_rows - 1)
-            E.cursor.y = E.buf.num_rows - 1;
-        else {
-            E.cursor.x = E.buf.rows[E.cursor.y].size;
-            E.cursor.preferred_x = E.buf.rows[E.cursor.y].size;
-        }
+        E.cursor.y = E.buf.num_lines - 1;
+        E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
+        E.cursor.preferred_x = E.cursor.x;
     }
 }
 
-void editorDrawWelcomeMessage(appendBuffer *ab) {
+void editorDrawWelcomeMessage(AppendBuffer *ab) {
     char welcome[STATUS_LENGTH];
     int welcome_len = snprintf(welcome, sizeof(welcome), "Cypher Version %s", CYPHER_VERSION);
     if (welcome_len > E.view.screen_cols) welcome_len = E.view.screen_cols;
@@ -1160,7 +1182,7 @@ void editorDrawWelcomeMessage(appendBuffer *ab) {
 void editorRefreshScreen() {
     editorScroll();
 
-    appendBuffer ab = {
+    AppendBuffer ab = {
         .b = NULL,
         .len = 0,
         .capacity = 0,
@@ -1180,100 +1202,116 @@ void editorRefreshScreen() {
     abFree(&ab);
 }
 
-void editorDrawRows(appendBuffer *ab) {
-    if (E.buf.num_rows == 0) {
+void editorDrawRows(AppendBuffer *ab) {
+    if (E.buf.num_lines == 0) {
         editorDrawWelcomeMessage(ab);
         return;
     }
 
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
-        if (file_row >= E.buf.num_rows) {
+        if (file_row >= E.buf.num_lines)
             abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
-        } else {
-            int len = E.buf.rows[file_row].rsize - E.view.col_offset;
-            if (len < 0) len = 0;
-            if (len > E.view.screen_cols) len = E.view.screen_cols;
+        else {
+            size_t line_len;
+            char *line_text = editorGetLine(&E.buf, file_row, &line_len);
 
-            for (int j = 0; j < len; j++) {
-                int cx = editorRowRxToCx(&E.buf.rows[file_row], j + E.view.col_offset);
-                int is_sel = 0;
-                if (E.sel.active) {
-                    int y1 = E.sel.sy, x1 = E.sel.sx;
-                    int y2 = E.sel.ey, x2 = E.sel.ex;
-                    if (y1 > y2 || (y1 == y2 && x1 > x2)) {
-                        int tmpy = y1, tmpx = x1;
-                        y1 = y2;
-                        x1 = x2;
-                        y2 = tmpy;
-                        x2 = tmpx;
+            if (line_text) {
+                int tabs = 0;
+                for (size_t i = 0; i < line_len; i++) if (line_text[i] == '\t') tabs++;
+
+                char *render_text = safeMalloc(line_len + tabs * (TAB_SIZE - 1) + 1);
+                int rsize = 0;
+                for (size_t i = 0; i < line_len; i++) {
+                    if (line_text[i] == '\t') {
+                        render_text[rsize++] = ' ';
+                        while (rsize % TAB_SIZE != 0) render_text[rsize++] = ' ';
                     }
-                    if (file_row > y1 && file_row < y2) is_sel = 1;
-                    else if (file_row == y1 && file_row == y2 && cx >= x1 && cx < x2) is_sel = 1;
-                    else if (file_row == y1 && file_row != y2 && cx >= x1) is_sel = 1;
-                    else if (file_row == y2 && file_row != y1 && cx < x2) is_sel = 1;
+                    else if (is_cntrl(line_text[i]))
+                        render_text[rsize++] = '?';
+                    else
+                        render_text[rsize++] = line_text[i];
                 }
+                render_text[rsize] = '\0';
 
-                int is_find = 0;
-                int is_current_match = 0;
-                if (E.find.active && E.find.query) {
-                    int match_len = strlen(E.find.query);
-                    for (int m = 0; m < E.find.num_matches; m++) {
-                        if (E.find.match_lines[m] == file_row) {
-                            int col_start = E.find.match_cols[m];
-                            int col_end = col_start + match_len;
-                            if (cx >= col_start && cx < col_end) {
-                                is_find = 1;
-                                if (m == E.find.current_idx)
-                                    is_current_match = 1;
-                                break;
+                int len = rsize - E.view.col_offset;
+                if (len < 0) len = 0;
+                if (len > E.view.screen_cols) len = E.view.screen_cols;
+
+                for (int j = 0; j < len; j++) {
+                    int cx = editorLineRxToCx(line_text, line_len, j + E.view.col_offset);
+                    int is_sel = 0;
+                    if (E.sel.active) {
+                        int y1 = E.sel.sy, x1 = E.sel.sx;
+                        int y2 = E.sel.ey, x2 = E.sel.ex;
+                        if (y1 > y2 || (y1 == y2 && x1 > x2)) {
+                            int tmpy = y1, tmpx = x1;
+                            y1 = y2; x1 = x2; y2 = tmpy; x2 = tmpx;
+                        }
+                        if (file_row > y1 && file_row < y2) is_sel = 1;
+                        else if (file_row == y1 && file_row == y2 && cx >= x1 && cx < x2) is_sel = 1;
+                        else if (file_row == y1 && file_row != y2 && cx >= x1) is_sel = 1;
+                        else if (file_row == y2 && file_row != y1 && cx < x2) is_sel = 1;
+                    }
+
+                    int is_find = 0;
+                    int is_current_match = 0;
+                    if (E.find.active && E.find.query) {
+                        int match_len = strlen(E.find.query);
+                        for (int m = 0; m < E.find.num_matches; m++) {
+                            if (E.find.match_lines[m] == file_row) {
+                                int col_start = E.find.match_cols[m];
+                                int col_end = col_start + match_len;
+                                if (cx >= col_start && cx < col_end) {
+                                    is_find = 1;
+                                    if (m == E.find.current_idx) is_current_match = 1;
+                                    break;
+                                }
                             }
                         }
                     }
-                }
 
-                if (is_sel && !is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
-                else if (is_current_match) abAppend(ab, YELLOW_FG_COLOR, sizeof(YELLOW_FG_COLOR) - 1);
-                else if (is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
+                    if (is_sel && !is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
+                    else if (is_current_match) abAppend(ab, YELLOW_FG_COLOR, sizeof(YELLOW_FG_COLOR) - 1);
+                    else if (is_find) abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
 
-                if (E.sys.has_bracket && !E.sel.active && !E.find.active) {
-                    int start_row = E.cursor.y;
-                    int start_col = E.cursor.x;
-                    int end_row = E.sys.bracket_y;
-                    int end_col = E.sys.bracket_x;
-
-                    if (start_row > end_row || (start_row == end_row && start_col > end_col)) {
-                        int tmp_r = start_row, tmp_c = start_col;
-                        start_row = end_row;
-                        start_col = end_col;
-                        end_row = tmp_r;
-                        end_col = tmp_c;
-                    }
-
-                    if (file_row >= start_row && file_row <= end_row) {
-                        int highlight_start_col = 0;
-                        int highlight_end_col = E.buf.rows[file_row].size;
-
-                        if (file_row == start_row)
-                            highlight_start_col = start_col;
-                        if (file_row == end_row)
-                            highlight_end_col = end_col + 1;
-
-                        if (cx >= highlight_start_col && cx < highlight_end_col) {
-                            abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
-                            abAppend(ab, &E.buf.rows[file_row].render[j + E.view.col_offset], 1);
-                            abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
-                        } else {
-                            abAppend(ab, &E.buf.rows[file_row].render[j + E.view.col_offset], 1);
+                    if (E.sys.has_bracket && !E.sel.active && !E.find.active) {
+                        int start_row = E.cursor.y;
+                        int start_col = E.cursor.x;
+                        int end_row = E.sys.bracket_y;
+                        int end_col = E.sys.bracket_x;
+                        if (start_row > end_row || (start_row == end_row && start_col > end_col)) {
+                            int tmp_r = start_row, tmp_c = start_col;
+                            start_row = end_row; start_col = end_col;
+                            end_row = tmp_r; end_col = tmp_c;
                         }
-                    } else {
-                        abAppend(ab, &E.buf.rows[file_row].render[j + E.view.col_offset], 1);
+
+                        if (file_row >= start_row && file_row <= end_row) {
+                            int highlight_start_col = 0;
+                            int highlight_end_col = line_len;
+
+                            if (file_row == start_row) highlight_start_col = start_col;
+                            if (file_row == end_row) highlight_end_col = end_col + 1;
+
+                            if (cx >= highlight_start_col && cx < highlight_end_col) {
+                                abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
+                                abAppend(ab, &render_text[j + E.view.col_offset], 1);
+                                abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
+                            }
+                            else
+                                abAppend(ab, &render_text[j + E.view.col_offset], 1);
+                        }
+                        else
+                            abAppend(ab, &render_text[j + E.view.col_offset], 1);
                     }
-                } else {
-                    abAppend(ab, &E.buf.rows[file_row].render[j + E.view.col_offset], 1);
+                    else
+                        abAppend(ab, &render_text[j + E.view.col_offset], 1);
+
+                    if (is_sel || is_find || is_current_match) abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
                 }
 
-                if (is_sel || is_find || is_current_match) abAppend(ab, REMOVE_GRAPHICS, sizeof(REMOVE_GRAPHICS) - 1);
+                free(render_text);
+                free(line_text);
             }
         }
         abAppend(ab, CLEAR_LINE NEW_LINE, sizeof(CLEAR_LINE NEW_LINE) - 1);
@@ -1282,8 +1320,14 @@ void editorDrawRows(appendBuffer *ab) {
 
 void editorScroll() {
     E.cursor.render_x = 0;
-    if (E.cursor.y < E.buf.num_rows)
-        E.cursor.render_x = editorRowCxToRx(&E.buf.rows[E.cursor.y], E.cursor.x);
+    if (E.cursor.y < E.buf.num_lines) {
+        size_t line_len;
+        char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+        if (line_text) {
+            E.cursor.render_x = editorLineCxToRx(line_text, line_len, E.cursor.x);
+            free(line_text);
+        }
+    }
 
     if (E.cursor.y < E.view.row_offset)
         E.view.row_offset = E.cursor.y;
@@ -1295,10 +1339,10 @@ void editorScroll() {
         E.view.col_offset = E.cursor.render_x - E.view.screen_cols + 1;
 }
 
-void editorDrawStatusBar(appendBuffer *ab) {
+void editorDrawStatusBar(AppendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
     char status[STATUS_LENGTH], rstatus[STATUS_LENGTH];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.buf.filename ? E.buf.filename : "[No Name]", E.buf.num_rows, E.buf.dirty ? "(modified)" : "");
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.buf.filename ? E.buf.filename : "[No Name]", E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
     if (len > E.view.screen_cols)
         len = E.view.screen_cols;
@@ -1321,7 +1365,7 @@ void editorSetStatusMsg(const char *msg) {
     E.sys.status_msg_time = time(NULL);
 }
 
-void editorDrawMsgBar(appendBuffer *ab) {
+void editorDrawMsgBar(AppendBuffer *ab) {
     abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE));
 
     int msg_len = strlen(E.sys.status_msg);
@@ -1376,7 +1420,7 @@ void editorManualScreen() {
         write(STDOUT_FILENO, buf, len);
     }
 
-    editorReadKey();
+    while (editorReadKey() == 0);
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR) - 1);
 }
 
@@ -1388,9 +1432,9 @@ void editorInit() {
     E.view.row_offset = 0;
     E.view.col_offset = 0;
     E.view.resized = 0;
-    E.buf.rows = NULL;
-    E.buf.num_rows = 0;
-    E.buf.row_capacity = 0;
+    E.buf.line_offsets = NULL;
+    E.buf.num_lines = 0;
+    E.buf.line_capacity = 0;
     E.buf.filename = NULL;
     E.buf.dirty = false;
     E.buf.save_times = SAVE_TIMES;
@@ -1420,12 +1464,11 @@ void editorInit() {
 }
 
 void editorCleanup() {
-    if (E.buf.rows != NULL) {
-        for (int i = 0; i < E.buf.num_rows; i++)
-            editorFreeRow(&E.buf.rows[i]);
-        free(E.buf.rows);
-        E.buf.rows = NULL;
-    }
+    ptFree(&E.buf.pt);
+    free(E.buf.line_offsets);
+    E.buf.line_offsets = NULL;
+    E.buf.num_lines = 0;
+
     free(E.buf.filename);
     E.buf.filename = NULL;
 
@@ -1443,7 +1486,7 @@ void editorCleanup() {
     E.find.active = false;
 }
 
-void abAppend(appendBuffer *ab, const char *str, int len) {
+void abAppend(AppendBuffer *ab, const char *str, int len) {
     if (ab->len + len >= ab->capacity) {
         int new_capacity = ab->capacity == 0 ? DEFAULT_AB_CAPACITY : ab->capacity * 2;
         while (new_capacity < ab->len + len)
@@ -1456,7 +1499,7 @@ void abAppend(appendBuffer *ab, const char *str, int len) {
     ab->len += len;
 }
 
-void abFree(appendBuffer *ab) {
+void abFree(AppendBuffer *ab) {
     free(ab->b);
 }
 
@@ -1466,45 +1509,37 @@ void editorOpen(const char *filename) {
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        if (errno == ENOENT)
+        if (errno == ENOENT) {
+            ptInit(&E.buf.pt, "", 0);
+            editorUpdateLineOffsets(&E.buf);
+            E.buf.dirty = false;
             return;
+        }
         die("fopen");
     }
 
-    char *line = NULL;
-    size_t line_cap = 0;
-    ssize_t line_len;
-    while ((line_len = getline(&line, &line_cap, fp)) != -1) {
-        while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r'))
-            line_len--;
-        editorInsertRow(E.buf.num_rows, line, line_len);
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (file_size > 0) {
+        char *buffer = safeMalloc(file_size + 1);
+        size_t read_size = fread(buffer, 1, file_size, fp);
+        buffer[read_size] = '\0';
+        ptInit(&E.buf.pt, buffer, read_size);
+        free(buffer);
     }
-    free(line);
+    else
+        ptInit(&E.buf.pt, "", 0);
+
     fclose(fp);
+    editorUpdateLineOffsets(&E.buf);
     E.buf.dirty = false;
 }
 
 char *editorRowsToString(size_t *buf_len) {
-    size_t total_len = 0;
-    for (int i = 0; i < E.buf.num_rows; i++) {
-        total_len += E.buf.rows[i].size;
-        if (i < E.buf.num_rows - 1 || E.buf.rows[i].size > 0)
-            total_len += 1;
-    }
-    *buf_len = total_len;
-
-    char *buf = safeMalloc(total_len + 1);
-    char *ptr = buf;
-    for (int i = 0; i < E.buf.num_rows; i++) {
-        memcpy(ptr, E.buf.rows[i].chars, E.buf.rows[i].size);
-        ptr += E.buf.rows[i].size;
-        if (i < E.buf.num_rows - 1 || E.buf.rows[i].size > 0) {
-            *ptr = '\n';
-            ptr++;
-        }
-    }
-
-    return buf;
+    *buf_len = E.buf.pt.logical_size;
+    return ptGetText(&E.buf.pt);
 }
 
 void editorSave() {
@@ -1560,31 +1595,20 @@ void editorSave() {
         return;
     }
 
-    int total_bytes = 0;
+    int total_bytes = E.buf.pt.logical_size;
     bool success = true;
-    for (int i = 0; i < E.buf.num_rows; i++) {
-        if (E.buf.rows[i].size > 0) {
-            if (write(fd, E.buf.rows[i].chars, E.buf.rows[i].size) != E.buf.rows[i].size) {
-                success = false;
-                break;
-            }
-            total_bytes += E.buf.rows[i].size;
-        }
-
-        if (i < E.buf.num_rows - 1 || E.buf.rows[i].size > 0) {
-            if (write(fd, "\n", 1) != 1) {
-                success = false;
-                break;
-            }
-            total_bytes++;
-        }
+    if (total_bytes > 0) {
+        char *full_text = ptGetText(&E.buf.pt);
+        if (write(fd, full_text, total_bytes) != total_bytes)
+            success = false;
+        free(full_text);
     }
 
     if (success)
         if (fsync(fd) == -1)
             success = false;
-
     close(fd);
+
     if (success) {
         E.buf.dirty = false;
         E.buf.quit_times = QUIT_TIMES;
@@ -1608,14 +1632,18 @@ void editorSave() {
 }
 
 void panicSave(int signum) {
-    if (E.buf.filename && E.buf.rows) {
+    if (E.buf.filename && E.buf.pt.pieces) {
         char path[BUFFER_SIZE];
         snprintf(path, sizeof(path), "%s.crash", E.buf.filename);
+
         int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, DEFAULT_FILE_PERMS);
         if (fd != -1) {
-            for (int i = 0; i < E.buf.num_rows; i++) {
-                write(fd, E.buf.rows[i].chars, E.buf.rows[i].size);
-                write(fd, "\n", 1);
+            for (size_t i = 0; i < E.buf.pt.num_pieces; i++) {
+                Piece p = E.buf.pt.pieces[i];
+                if (p.length == 0) continue;
+
+                char *source = (p.source == BUFFER_ORIGINAL) ? E.buf.pt.orig_buf : E.buf.pt.add_buf;
+                write(fd, source + p.start, p.length);
             }
             close(fd);
         }
@@ -1637,161 +1665,439 @@ void editorQuit() {
     exit(0);
 }
 
-void editorInsertRow(int at, const char *str, size_t len) {
-    if (at < 0 || at > E.buf.num_rows) return;
+void ptInit(PieceTable *pt, const char *file_content, size_t content_len) {
+    pt->orig_buf = file_content ? safeStrdup(file_content) : safeStrdup("");
+    pt->orig_len = content_len;
+    pt->add_capacity = 1024;
+    pt->add_buf = safeMalloc(pt->add_capacity);
+    pt->add_len = 0;
+    pt->piece_capacity = 128;
+    pt->pieces = safeMalloc(sizeof(Piece) * pt->piece_capacity);
 
-    if (E.buf.num_rows >= E.buf.row_capacity) {
-        int new_capacity = E.buf.row_capacity == 0 ? DEFAULT_ROW_CAPACITY : E.buf.row_capacity * 2;
-        E.buf.rows = safeRealloc(E.buf.rows, sizeof(editorRow) * new_capacity);
-        E.buf.row_capacity = new_capacity;
+    if (content_len > 0) {
+        pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, content_len};
+        pt->num_pieces = 1;
+    } else {
+        pt->num_pieces = 0;
     }
-    memmove(&E.buf.rows[at + 1], &E.buf.rows[at], sizeof(editorRow) * (E.buf.num_rows - at));
-
-    E.buf.rows[at].size = len;
-    E.buf.rows[at].chars = safeMalloc(len + 1);
-    memcpy(E.buf.rows[at].chars, str, len);
-    E.buf.rows[at].chars[len] = '\0';
-
-    E.buf.rows[at].rsize = 0;
-    E.buf.rows[at].render = NULL;
-    editorUpdateRow(&E.buf.rows[at]);
-
-    E.buf.num_rows++;
-    E.buf.dirty = true;
+    pt->logical_size = content_len;
 }
 
-void editorUpdateRow(editorRow *row) {
-    int tabs = 0;
-    for (int i = 0; i < row->size; i++)
-        if (row->chars[i] == '\t')
-            tabs++;
-    free(row->render);
-    row->render = safeMalloc(row->size + tabs * (TAB_SIZE - 1) + 1);
+char *ptGetText(PieceTable *pt) {
+    char *buf = safeMalloc(pt->logical_size + 1);
+    size_t current_pos = 0;
+    for (size_t i = 0; i < pt->num_pieces; i++) {
+        Piece p = pt->pieces[i];
+        if (p.length == 0) continue;
 
-    int idx = 0;
-    for (int i = 0; i < row->size; i++) {
-        if (row->chars[i] == '\t') {
-            row->render[idx++] = ' ';
-            while (idx % TAB_SIZE != 0)
-                row->render[idx++] = ' ';
-        }
-        else {
-            if (is_cntrl(row->chars[i]))
-                row->render[idx++] = '?';
-            else
-                row->render[idx++] = row->chars[i];
-        }
+        char *source_buf = (p.source == BUFFER_ORIGINAL) ? pt->orig_buf : pt->add_buf;
+        memcpy(buf + current_pos, source_buf + p.start, p.length);
+        current_pos += p.length;
     }
-
-    row->render[idx] = '\0';
-    row->rsize = idx;
+    buf[pt->logical_size] = '\0';
+    return buf;
 }
 
-int editorRowCxToRx(const editorRow *row, int cursor_x) {
+void ptFree(PieceTable *pt) {
+    free(pt->orig_buf);
+    free(pt->add_buf);
+    free(pt->pieces);
+}
+
+void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) {
+    if (text_len == 0 || offset > pt->logical_size) return;
+
+    // 1. Append to Add Buffer
+    if (pt->add_len + text_len > pt->add_capacity) {
+        while (pt->add_len + text_len > pt->add_capacity) pt->add_capacity *= 2;
+        pt->add_buf = safeRealloc(pt->add_buf, pt->add_capacity);
+    }
+    size_t new_piece_start = pt->add_len;
+    memcpy(pt->add_buf + pt->add_len, text, text_len);
+    pt->add_len += text_len;
+
+    Piece new_piece = {BUFFER_ADD, new_piece_start, text_len};
+    pt->logical_size += text_len;
+
+    // 2. Edge Case: Empty File
+    if (pt->num_pieces == 0) {
+        pt->pieces[0] = new_piece;
+        pt->num_pieces = 1;
+        return;
+    }
+
+    // 3. Find insertion point
+    size_t piece_idx, piece_offset;
+    ptFindPiece(pt, offset, &piece_idx, &piece_offset);
+
+    // 4. Split and Insert
+    Piece target = pt->pieces[piece_idx];
+    
+    if (piece_offset == 0) {
+        // Insert exactly before a piece
+        if (pt->num_pieces + 1 > pt->piece_capacity) {
+            pt->piece_capacity *= 2;
+            pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
+        }
+        memmove(&pt->pieces[piece_idx + 1], &pt->pieces[piece_idx], sizeof(Piece) * (pt->num_pieces - piece_idx));
+        pt->pieces[piece_idx] = new_piece;
+        pt->num_pieces++;
+        
+    } else if (piece_offset == target.length) {
+        // Insert exactly after a piece (usually at EOF)
+        if (pt->num_pieces + 1 > pt->piece_capacity) {
+            pt->piece_capacity *= 2;
+            pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
+        }
+        memmove(&pt->pieces[piece_idx + 2], &pt->pieces[piece_idx + 1], sizeof(Piece) * (pt->num_pieces - piece_idx - 1));
+        pt->pieces[piece_idx + 1] = new_piece;
+        pt->num_pieces++;
+        
+    } else {
+        // Split piece in the middle
+        Piece left = {target.source, target.start, piece_offset};
+        Piece right = {target.source, target.start + piece_offset, target.length - piece_offset};
+
+        if (pt->num_pieces + 2 > pt->piece_capacity) {
+            pt->piece_capacity *= 2;
+            pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
+        }
+
+        memmove(&pt->pieces[piece_idx + 3], &pt->pieces[piece_idx + 1], sizeof(Piece) * (pt->num_pieces - piece_idx - 1));
+        pt->pieces[piece_idx] = left;
+        pt->pieces[piece_idx + 1] = new_piece;
+        pt->pieces[piece_idx + 2] = right;
+        pt->num_pieces += 2;
+    }
+}
+
+void ptDelete(PieceTable *pt, size_t offset, size_t len) {
+    if (len == 0 || offset >= pt->logical_size) return;
+    if (offset + len > pt->logical_size) len = pt->logical_size - offset;
+
+    size_t start_idx, start_offset;
+    size_t end_idx, end_offset;
+    ptFindPiece(pt, offset, &start_idx, &start_offset);
+    ptFindPiece(pt, offset + len, &end_idx, &end_offset);
+
+    if (start_idx == end_idx) {
+        Piece target = pt->pieces[start_idx];
+        if (start_offset == 0 && end_offset == target.length) {
+            memmove(&pt->pieces[start_idx], &pt->pieces[start_idx + 1], sizeof(Piece) * (pt->num_pieces - start_idx - 1));
+            pt->num_pieces--;
+        } else if (start_offset == 0) {
+            pt->pieces[start_idx].start += len;
+            pt->pieces[start_idx].length -= len;
+        } else if (end_offset == target.length) {
+            pt->pieces[start_idx].length -= len;
+        } else {
+            Piece left = {target.source, target.start, start_offset};
+            Piece right = {target.source, target.start + end_offset, target.length - end_offset};
+
+            if (pt->num_pieces + 1 > pt->piece_capacity) {
+                pt->piece_capacity *= 2;
+                pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
+            }
+            memmove(&pt->pieces[start_idx + 2], &pt->pieces[start_idx + 1], sizeof(Piece) * (pt->num_pieces - start_idx - 1));
+            pt->pieces[start_idx] = left;
+            pt->pieces[start_idx + 1] = right;
+            pt->num_pieces++;
+        }
+    } else {
+        pt->pieces[start_idx].length = start_offset;
+        pt->pieces[end_idx].start += end_offset;
+        pt->pieces[end_idx].length -= end_offset;
+
+        size_t pieces_to_remove = (end_idx - start_idx) - 1;
+        if (pt->pieces[end_idx].length == 0) pieces_to_remove++;
+        if (pt->pieces[start_idx].length == 0) {
+            pieces_to_remove++;
+            start_idx--;
+        }
+
+        if (pieces_to_remove > 0) {
+            memmove(&pt->pieces[start_idx + 1], &pt->pieces[start_idx + 1 + pieces_to_remove], sizeof(Piece) * (pt->num_pieces - (start_idx + 1 + pieces_to_remove)));
+            pt->num_pieces -= pieces_to_remove;
+        }
+    }
+    pt->logical_size -= len;
+}
+
+bool ptFindPiece(PieceTable *pt, size_t offset, size_t *piece_idx, size_t *piece_offset) {
+    if (offset > pt->logical_size) return false;
+
+    size_t current_offset = 0;
+    for (size_t i = 0; i < pt->num_pieces; i++) {
+        if (current_offset + pt->pieces[i].length > offset) {
+            *piece_idx = i;
+            *piece_offset = offset - current_offset;
+            return true;
+        }
+        current_offset += pt->pieces[i].length;
+    }
+
+    if (offset == pt->logical_size && pt->num_pieces > 0) {
+        *piece_idx = pt->num_pieces - 1;
+        *piece_offset = pt->pieces[*piece_idx].length;
+        return true;
+    }
+    return false;
+}
+
+void editorUpdateLineOffsets(EditorBuffer *buf) {
+    if (buf->line_capacity == 0) {
+        buf->line_capacity = 1024;
+        buf->line_offsets = safeMalloc(sizeof(size_t) * buf->line_capacity);
+    }
+
+    buf->line_offsets[0] = 0;
+    buf->num_lines = 1;
+
+    size_t current_logical_offset = 0;
+    for (size_t i = 0; i < buf->pt.num_pieces; i++) {
+        Piece p = buf->pt.pieces[i];
+        if (p.length == 0) continue;
+
+        char *source_buf = (p.source == BUFFER_ORIGINAL) ? buf->pt.orig_buf : buf->pt.add_buf;
+        for (size_t j = 0; j < p.length; j++) {
+            if (source_buf[p.start + j] == '\n') {
+                if (buf->num_lines >= buf->line_capacity) {
+                    buf->line_capacity *= 2;
+                    buf->line_offsets = safeRealloc(buf->line_offsets, sizeof(size_t) * buf->line_capacity);
+                }
+                buf->line_offsets[buf->num_lines++] = current_logical_offset + j + 1;
+            }
+        }
+        current_logical_offset += p.length;
+    }
+}
+
+void ptReadLogical(PieceTable *pt, size_t offset, size_t length, char *out_buf) {
+    size_t bytes_read = 0;
+    size_t piece_idx, piece_offset;
+    if (!ptFindPiece(pt, offset, &piece_idx, &piece_offset)) return;
+
+    while (bytes_read < length && piece_idx < pt->num_pieces) {
+        Piece p = pt->pieces[piece_idx];
+        char *source = (p.source == BUFFER_ORIGINAL) ? pt->orig_buf : pt->add_buf;
+
+        size_t available_in_piece = p.length - piece_offset;
+        size_t bytes_to_copy = (length - bytes_read < available_in_piece) ? (length - bytes_read) : available_in_piece;
+
+        memcpy(out_buf + bytes_read, source + p.start + piece_offset, bytes_to_copy);
+        bytes_read += bytes_to_copy;
+        piece_idx++;
+        piece_offset = 0;
+    }
+    out_buf[bytes_read] = '\0';
+}
+
+char *editorGetLine(EditorBuffer *buf, int line_idx, size_t *line_len) {
+    if (line_idx < 0 || line_idx >= buf->num_lines) return NULL;
+
+    size_t start_offset = buf->line_offsets[line_idx];
+    size_t end_offset;
+    if (line_idx == buf->num_lines - 1)
+        end_offset = buf->pt.logical_size;
+    else
+        end_offset = buf->line_offsets[line_idx + 1] - 1;
+
+    *line_len = end_offset - start_offset;
+    char *line_text = safeMalloc(*line_len + 1);
+
+    ptReadLogical(&buf->pt, start_offset, *line_len, line_text);
+    return line_text;
+}
+
+int editorLineCxToRx(const char *chars, int size, int cursor_x) {
     int render_x = 0;
-    for (int i = 0; i < cursor_x; i++) {
-        if (row->chars[i] == '\t')
+    for (int i = 0; i < cursor_x && i < size; i++) {
+        if (chars[i] == '\t')
             render_x += (TAB_SIZE - 1) - (render_x % TAB_SIZE);
         render_x++;
     }
-
     return render_x;
 }
 
-int editorRowRxToCx(const editorRow *row, int render_x) {
+int editorLineRxToCx(const char *chars, int size, int render_x) {
     int cur_render_x = 0;
     int cursor_x;
-    for (cursor_x = 0; cursor_x < row->size; cursor_x++) {
-        if (row->chars[cursor_x] == '\t')
+    for (cursor_x = 0; cursor_x < size; cursor_x++) {
+        if (chars[cursor_x] == '\t')
             cur_render_x += (TAB_SIZE - 1) - (cur_render_x % TAB_SIZE);
         cur_render_x++;
-
         if (cur_render_x > render_x) return cursor_x;
     }
-
     return cursor_x;
 }
 
-void editorRowInsertChar(editorRow *row, int at, int ch) {
-    if (at < 0 || at > row->size)
-        at = row->size;
+size_t editorGetLogicalOffset(EditorBuffer *buf, int cursor_y, int cursor_x) {
+    if (buf->num_lines == 0) return 0;
 
-    row->chars = safeRealloc(row->chars, row->size + 2);
-    memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
-    row->size++;
-    row->chars[at] = ch;
-    editorUpdateRow(row);
-    E.buf.dirty = true;
+    if (cursor_y >= buf->num_lines) cursor_y = buf->num_lines - 1;
+    if (cursor_y < 0) cursor_y = 0;
+
+    size_t line_start = buf->line_offsets[cursor_y];
+    size_t line_len = editorGetLineLength(buf, cursor_y);
+
+    if ((size_t)cursor_x > line_len) cursor_x = line_len;
+    if (cursor_x < 0) cursor_x = 0;
+
+    return line_start + cursor_x;
 }
 
-void editorRowDeleteChar(editorRow *row, int at) {
-    if (at < 0 || at >= row->size) return;
+void editorOffsetToRowCol(EditorBuffer *buf, size_t offset, int *row, int *col) {
+    if (buf->num_lines == 0) {
+        *row = 0; *col = 0;
+        return;
+    }
 
-    memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
-    row->size--;
-    editorUpdateRow(row);
-    E.buf.dirty = true;
-}
+    for (int i = 0; i < buf->num_lines; i++) {
+        size_t start = buf->line_offsets[i];
+        size_t end = (i == buf->num_lines - 1) ? buf->pt.logical_size : buf->line_offsets[i + 1];
+        if (offset >= start && (offset < end || (offset == end && i == buf->num_lines - 1))) {
+            *row = i;
+            *col = offset - start;
+            return;
+        }
+    }
 
-void editorFreeRow(editorRow *row) {
-    free(row->chars);
-    free(row->render);
-}
-
-void editorDeleteRow(int at) {
-    if (at < 0 || at >= E.buf.num_rows) return;
-
-    editorFreeRow(&E.buf.rows[at]);
-    memmove(&E.buf.rows[at], &E.buf.rows[at + 1], sizeof(editorRow) * (E.buf.num_rows - at - 1));
-    E.buf.num_rows--;
-    E.buf.dirty = true;
-}
-
-void editorRowAppendString(editorRow *row, const char *str, size_t len) {
-    row->chars = safeRealloc(row->chars, row->size + len + 1);
-    memcpy(&row->chars[row->size], str, len);
-    row->size += len;
-    row->chars[row->size] = '\0';
-    editorUpdateRow(row);
-    E.buf.dirty = true;
+    *row = buf->num_lines - 1;
+    *col = offset - buf->line_offsets[*row];
 }
 
 void editorMoveRowUp() {
-    if (E.cursor.y <= 0 || E.cursor.y >= E.buf.num_rows) return;
+    if (E.cursor.y <= 0) return;
+    E.sel.active = false;
+    saveEditorStateForUndo();
 
-    editorRow temp = E.buf.rows[E.cursor.y - 1];
-    E.buf.rows[E.cursor.y - 1] = E.buf.rows[E.cursor.y];
-    E.buf.rows[E.cursor.y] = temp;
+    size_t prev_start = E.buf.line_offsets[E.cursor.y - 1];
+    size_t current_start = E.buf.line_offsets[E.cursor.y];
+    size_t current_end = (E.cursor.y == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 1];
 
+    size_t prev_len = current_start - prev_start;
+    size_t current_len = current_end - current_start;
+
+    char *prev_text = safeMalloc(prev_len + 1);
+    ptReadLogical(&E.buf.pt, prev_start, prev_len, prev_text);
+    char *current_text = safeMalloc(current_len + 1);
+    ptReadLogical(&E.buf.pt, current_start, current_len, current_text);
+
+    bool prev_has_nl = (prev_len > 0 && prev_text[prev_len - 1] == '\n');
+    bool curr_has_nl = (current_len > 0 && current_text[current_len - 1] == '\n');
+    if (prev_has_nl && !curr_has_nl) {
+        prev_text[prev_len - 1] = '\0';
+        prev_len--;
+
+        current_text = safeRealloc(current_text, current_len + 2);
+        current_text[current_len] = '\n';
+        current_text[current_len + 1] = '\0';
+        current_len++;
+    }
+
+    ptDelete(&E.buf.pt, prev_start, prev_len + current_len);
+    ptInsert(&E.buf.pt, prev_start, current_text, current_len);
+    ptInsert(&E.buf.pt, prev_start + current_len, prev_text, prev_len);
+
+    free(prev_text);
+    free(current_text);
     E.cursor.y--;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorMoveRowDown() {
-    if (E.cursor.y < 0 || E.cursor.y >= E.buf.num_rows - 1) return;
+    if (E.cursor.y >= E.buf.num_lines - 1) return;
+    E.sel.active = false;
+    saveEditorStateForUndo();
 
-    editorRow temp = E.buf.rows[E.cursor.y + 1];
-    E.buf.rows[E.cursor.y + 1] = E.buf.rows[E.cursor.y];
-    E.buf.rows[E.cursor.y] = temp;
+    size_t current_start = E.buf.line_offsets[E.cursor.y];
+    size_t next_start = E.buf.line_offsets[E.cursor.y + 1];
+    size_t next_end = (E.cursor.y + 1 == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 2];
 
+    size_t current_len = next_start - current_start;
+    size_t next_len = next_end - next_start;
+
+    char *current_text = safeMalloc(current_len + 1);
+    ptReadLogical(&E.buf.pt, current_start, current_len, current_text);
+
+    char *next_text = safeMalloc(next_len + 1);
+    ptReadLogical(&E.buf.pt, next_start, next_len, next_text);
+
+    bool curr_has_nl = (current_len > 0 && current_text[current_len - 1] == '\n');
+    bool next_has_nl = (next_len > 0 && next_text[next_len - 1] == '\n');
+    if (curr_has_nl && !next_has_nl) {
+        current_text[current_len - 1] = '\0';
+        current_len--;
+
+        next_text = safeRealloc(next_text, next_len + 2);
+        next_text[next_len] = '\n';
+        next_text[next_len + 1] = '\0';
+        next_len++;
+    }
+
+    ptDelete(&E.buf.pt, current_start, current_len + next_len);
+    ptInsert(&E.buf.pt, current_start, next_text, next_len);
+    ptInsert(&E.buf.pt, current_start + next_len, current_text, current_len);
+
+    free(current_text);
+    free(next_text);
     E.cursor.y++;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorCopyRowUp() {
-    if (E.cursor.y >= E.buf.num_rows) return;
+    E.sel.active = false;
+    saveEditorStateForUndo();
 
-    editorRow *row = &E.buf.rows[E.cursor.y];
-    editorInsertRow(E.cursor.y, row->chars, row->size);
+    size_t current_start = E.buf.line_offsets[E.cursor.y];
+    size_t current_end = (E.cursor.y == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 1];
+    size_t current_len = current_end - current_start;
+
+    char *current_text = safeMalloc(current_len + 2);
+    ptReadLogical(&E.buf.pt, current_start, current_len, current_text);
+
+    bool curr_has_nl = (current_len > 0 && current_text[current_len - 1] == '\n');
+    if (!curr_has_nl) {
+        current_text[current_len] = '\n';
+        current_text[current_len + 1] = '\0';
+        current_len++;
+    }
+
+    ptInsert(&E.buf.pt, current_start, current_text, current_len);
+    free(current_text);
+    E.cursor.y++;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorCopyRowDown() {
-    if (E.cursor.y >= E.buf.num_rows) return;
+    E.sel.active = false;
+    saveEditorStateForUndo();
 
-    editorRow *row = &E.buf.rows[E.cursor.y];
-    editorInsertRow(++E.cursor.y, row->chars, row->size);
+    size_t current_start = E.buf.line_offsets[E.cursor.y];
+    size_t current_end = (E.cursor.y == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 1];
+    size_t current_len = current_end - current_start;
+    char *current_text = safeMalloc(current_len + 2);
+    ptReadLogical(&E.buf.pt, current_start, current_len, current_text);
+
+    bool curr_has_nl = (current_len > 0 && current_text[current_len - 1] == '\n');
+    if (!curr_has_nl) {
+        char *insert_text = safeMalloc(current_len + 2);
+        insert_text[0] = '\n';
+        memcpy(insert_text + 1, current_text, current_len);
+        insert_text[current_len + 1] = '\0';
+
+        ptInsert(&E.buf.pt, current_end, insert_text, current_len + 1);
+        free(insert_text);
+    } else {
+        ptInsert(&E.buf.pt, current_end, current_text, current_len);
+    }
+
+    free(current_text);
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorInsertChar(int ch) {
@@ -1801,16 +2107,18 @@ void editorInsertChar(int ch) {
         E.sel.active = false;
     }
 
-    if (E.cursor.y == E.buf.num_rows)
-        editorInsertRow(E.buf.num_rows, "", 0);
-    editorRowInsertChar(&E.buf.rows[E.cursor.y], E.cursor.x, ch);
+    size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
+    char c = ch;
+    ptInsert(&E.buf.pt, offset, &c, 1);
     E.cursor.x++;
 
     char closing_char = getClosingChar(ch);
     if (!E.sel.is_pasting && closing_char)
-        editorRowInsertChar(&E.buf.rows[E.cursor.y], E.cursor.x, closing_char);
+        ptInsert(&E.buf.pt, offset + 1, &closing_char, 1);
+
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorDeleteChar(int is_backspace) {
@@ -1819,108 +2127,85 @@ void editorDeleteChar(int is_backspace) {
         return;
     }
 
-    if (E.cursor.y == E.buf.num_rows) return;
-    if (E.cursor.x == 0 && E.cursor.y == 0) return;
+    if (E.buf.num_lines == 0) return;
+    if (E.cursor.x == 0 && E.cursor.y == 0 && is_backspace) return;
 
-    editorRow *row = &E.buf.rows[E.cursor.y];
-    if (E.cursor.x > 0) {
-        char prev_char = row->chars[E.cursor.x - 1];
-        char next_char = (E.cursor.x < row->size) ? row->chars[E.cursor.x] : '\0';
+    size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
+    if (is_backspace) {
+        char *full_doc = ptGetText(&E.buf.pt);
+        char prev_char = (offset > 0) ? full_doc[offset - 1] : '\0';
+        char next_char = (offset < E.buf.pt.logical_size) ? full_doc[offset] : '\0';
         char closing_char = getClosingChar(prev_char);
+        if (closing_char && next_char == closing_char)
+            ptDelete(&E.buf.pt, offset - 1, 2); 
+        else
+            ptDelete(&E.buf.pt, offset - 1, 1);
 
-        if (is_backspace) {
-            int spaces = 0;
-            while (spaces < TAB_SIZE && (E.cursor.x - spaces - 1) >= 0 && row->chars[E.cursor.x - spaces - 1] == ' ')
-                spaces++;
-
-            int only_spaces = 1;
-            for (int i = 0; i < E.cursor.x; i++) {
-                if (row->chars[i] != ' ') {
-                    only_spaces = 0;
-                    break;
-                }
-            }
-
-            if (spaces > 0 && (E.cursor.x % TAB_SIZE == 0) && only_spaces) {
-                for (int i = 0; i < spaces; i++)
-                    editorRowDeleteChar(row, --E.cursor.x);
-                E.cursor.preferred_x = E.cursor.x;
-                E.buf.dirty = true;
-                return;
-            }
+        free(full_doc);
+        if (E.cursor.x == 0) {
+            E.cursor.y--;
+            E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
         }
-
-        if (is_backspace && closing_char && next_char == closing_char) {
-            editorRowDeleteChar(row, E.cursor.x);
-            editorRowDeleteChar(row, E.cursor.x - 1);
+        else
             E.cursor.x--;
-            E.cursor.preferred_x = E.cursor.x;
-            E.buf.dirty = true;
-            return;
-        }
-
-        editorRowDeleteChar(row, --E.cursor.x);
-    } else {
-        E.cursor.x = E.buf.rows[E.cursor.y - 1].size;
-        editorRowAppendString(&E.buf.rows[E.cursor.y - 1], row->chars, row->size);
-        editorDeleteRow(E.cursor.y--);
     }
+    else if (offset < E.buf.pt.logical_size)
+        ptDelete(&E.buf.pt, offset, 1);
+
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorInsertNewline() {
-    editorRow *row = (E.cursor.y >= E.buf.num_rows) ? NULL : &E.buf.rows[E.cursor.y];
+    size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
+    size_t line_len;
+    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+
     int indent_len = 0;
-    while (indent_len < row->size && (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t'))
-        indent_len++;
-    if (indent_len > E.cursor.x)
-        indent_len = E.cursor.x;
-    if (E.sel.is_pasting)
-        indent_len = 0;
+    if (line_text) {
+        while ((size_t)indent_len < line_len && (line_text[indent_len] == ' ' || line_text[indent_len] == '\t')) indent_len++;
+        if (indent_len > E.cursor.x) indent_len = E.cursor.x;
+        if (E.sel.is_pasting) indent_len = 0;
+    }
 
-    char *indent_str = safeMalloc(indent_len + 1);
-    memcpy(indent_str, row->chars, indent_len);
-    indent_str[indent_len] = '\0';
+    char *insert_str = safeMalloc(1 + indent_len + 1);
+    insert_str[0] = '\n';
+    if (indent_len > 0)
+        memcpy(insert_str + 1, line_text, indent_len);
+    insert_str[1 + indent_len] = '\0';
 
-    if (E.cursor.x == 0)
-        editorInsertRow(E.cursor.y, indent_str, indent_len);
-    else {
-        editorInsertRow(E.cursor.y + 1, &row->chars[E.cursor.x], row->size - E.cursor.x);
-        row = &E.buf.rows[E.cursor.y];
-        row->size = E.cursor.x;
-        row->chars[row->size] = '\0';
-        editorUpdateRow(row);
-
-        editorRow *new_row = &E.buf.rows[E.cursor.y + 1];
-        new_row->chars = safeRealloc(new_row->chars, new_row->size + indent_len + 1);
-
-        memmove(new_row->chars + indent_len, new_row->chars, new_row->size + 1);
-        memcpy(new_row->chars, indent_str, indent_len);
-        new_row->size += indent_len;
-        editorUpdateRow(new_row);
-
-        if (E.cursor.x > 0 && (row->chars[E.cursor.x - 1] == '{' || row->chars[E.cursor.x - 1] == '[' || row->chars[E.cursor.x - 1] == '(') && new_row->size > 0 && new_row->chars[indent_len] == getClosingChar(row->chars[E.cursor.x - 1])) {
+    ptInsert(&E.buf.pt, offset, insert_str, 1 + indent_len);
+    if (E.cursor.x > 0 && line_text && line_len > (size_t)E.cursor.x && (line_text[E.cursor.x - 1] == '{' || line_text[E.cursor.x - 1] == '[' || line_text[E.cursor.x - 1] == '(')) {
+        if (line_text[E.cursor.x] == getClosingChar(line_text[E.cursor.x - 1])) {
             int new_indent_len = indent_len + TAB_SIZE;
-            char *block_indent = safeMalloc(new_indent_len + 1);
-            memset(block_indent, ' ', new_indent_len);
-            block_indent[new_indent_len] = '\0';
-            editorInsertRow(E.cursor.y + 1, block_indent, new_indent_len);
+            char *block_indent = safeMalloc(1 + new_indent_len + 1);
+            block_indent[0] = '\n';
+            memset(block_indent + 1, ' ', new_indent_len);
+            block_indent[1 + new_indent_len] = '\0';
+
+            ptInsert(&E.buf.pt, offset + 1 + indent_len, block_indent, 1 + new_indent_len);
             free(block_indent);
 
             E.cursor.y++;
             E.cursor.x = new_indent_len;
             E.cursor.preferred_x = E.cursor.x;
 
-            free(indent_str);
+            free(insert_str);
+            free(line_text);
+            editorUpdateLineOffsets(&E.buf);
             return;
         }
     }
 
-    free(indent_str);
     E.cursor.y++;
     E.cursor.x = indent_len;
     E.cursor.preferred_x = E.cursor.x;
+    E.buf.dirty = true;
+
+    free(insert_str);
+    if (line_text) free(line_text);
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorSelectText(int ch) {
@@ -1935,18 +2220,17 @@ void editorSelectText(int ch) {
 }
 
 void editorSelectAll() {
-    if (E.buf.num_rows > 0) {
+    if (E.buf.num_lines > 0) {
         E.sel.active = true;
         E.sel.sx = 0;
         E.sel.sy = 0;
-        E.sel.ex = E.buf.rows[E.buf.num_rows - 1].size;
-        E.sel.ey = E.buf.num_rows - 1;
-
+        E.sel.ey = E.buf.num_lines - 1;
+        E.sel.ex = editorGetLineLength(&E.buf, E.sel.ey);
         E.cursor.x = E.sel.ex;
         E.cursor.y = E.sel.ey;
 
         char msg[STATUS_LENGTH];
-        snprintf(msg, sizeof(msg), "Selected all %d lines", E.buf.num_rows);
+        snprintf(msg, sizeof(msg), "Selected all %d lines", E.buf.num_lines);
         editorSetStatusMsg(msg);
     }
 }
@@ -1961,36 +2245,19 @@ char *editorGetSelectedText(int *len_out) {
     int x2 = E.sel.ex, y2 = E.sel.ey;
     if (y1 > y2 || (y1 == y2 && x1 > x2)) {
         int tmpx = x1, tmpy = y1;
-        x1 = x2;
-        y1 = y2;
-        x2 = tmpx;
-        y2 = tmpy;
+        x1 = x2; y1 = y2;
+        x2 = tmpx; y2 = tmpy;
     }
 
-    size_t total = 0;
-    for (int row = y1; row <= y2; row++) {
-        int startx = (row == y1) ? x1 : 0;
-        int endx = (row == y2) ? x2 : E.buf.rows[row].size;
-        if (endx > startx)
-            total += (endx - startx);
-        if (row != y2)
-            total++;
-    }
+    size_t start_offset = editorGetLogicalOffset(&E.buf, y1, x1);
+    size_t end_offset = editorGetLogicalOffset(&E.buf, y2, x2);
+    size_t total_len = end_offset - start_offset;
+    if (len_out) *len_out = total_len;
+    if (total_len == 0) return NULL;
 
-    if (len_out) *len_out = total;
-    char *buf = safeMalloc(total + 1);
-    char *ptr = buf;
-    for (int row = y1; row <= y2; row++) {
-        int startx = (row == y1) ? x1 : 0;
-        int endx = (row == y2) ? x2 : E.buf.rows[row].size;
-        if (endx > startx) {
-            memcpy(ptr, &E.buf.rows[row].chars[startx], endx - startx);
-            ptr += (endx - startx);
-        }
-        if (row != y2)
-            *ptr++ = '\n';
-    }
-    *ptr = '\0';
+    char *buf = safeMalloc(total_len + 1);
+    ptReadLogical(&E.buf.pt, start_offset, total_len, buf);
+
     return buf;
 }
 
@@ -2001,40 +2268,22 @@ void editorDeleteSelectedText() {
     int y2 = E.sel.ey, x2 = E.sel.ex;
     if (y1 > y2 || (y1 == y2 && x1 > x2)) {
         int tmpx = x1, tmpy = y1;
-        x1 = x2;
-        y1 = y2;
-        x2 = tmpx;
-        y2 = tmpy;
+        x1 = x2; y1 = y2;
+        x2 = tmpx; y2 = tmpy;
     }
 
-    if (y1 == y2) {
-        memmove(&E.buf.rows[y1].chars[x1], &E.buf.rows[y1].chars[x2], E.buf.rows[y1].size - x2);
-        E.buf.rows[y1].size -= (x2 - x1);
-        E.buf.rows[y1].chars[E.buf.rows[y1].size] = '\0';
-        editorUpdateRow(&E.buf.rows[y1]);
-    } else {
-        E.buf.rows[y1].size = x1;
-        E.buf.rows[y1].chars[x1] = '\0';
-        editorUpdateRow(&E.buf.rows[y1]);
-
-        memmove(E.buf.rows[y2].chars, &E.buf.rows[y2].chars[x2], E.buf.rows[y2].size - x2);
-        E.buf.rows[y2].size -= x2;
-        E.buf.rows[y2].chars[E.buf.rows[y2].size] = '\0';
-        editorUpdateRow(&E.buf.rows[y2]);
-
-        editorRowAppendString(&E.buf.rows[y1], E.buf.rows[y2].chars, E.buf.rows[y2].size);
-        editorDeleteRow(y2);
-
-        for (int row = y2 - 1; row > y1; row--)
-            editorDeleteRow(row);
-    }
+    size_t start_offset = editorGetLogicalOffset(&E.buf, y1, x1);
+    size_t end_offset = editorGetLogicalOffset(&E.buf, y2, x2);
+    size_t length_to_delete = end_offset - start_offset;
+    if (length_to_delete > 0)
+        ptDelete(&E.buf.pt, start_offset, length_to_delete);
 
     E.cursor.x = x1;
     E.cursor.y = y1;
     E.cursor.preferred_x = E.cursor.x;
-
     E.sel.active = false;
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorFind() {
@@ -2092,20 +2341,23 @@ void editorFindCallback(const char *query, int key) {
         E.find.num_matches = 0;
         E.find.current_idx = -1;
 
-        for (int i = 0; i < E.buf.num_rows; i++) {
-            char *line = E.buf.rows[i].chars;
-            char *ptr = line;
-            while ((ptr = strstr(ptr, query)) != NULL) {
-                E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
-                E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
+        char *full_text = ptGetText(&E.buf.pt);
+        char *ptr = full_text;
+        int query_len = strlen(query);
+        while ((ptr = strstr(ptr, query)) != NULL) {
+            E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
+            E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
 
-                E.find.match_lines[E.find.num_matches] = i;
-                E.find.match_cols[E.find.num_matches] = ptr - line;
-                E.find.num_matches++;
+            size_t match_offset = ptr - full_text;
+            int match_row, match_col;
+            editorOffsetToRowCol(&E.buf, match_offset, &match_row, &match_col);
 
-                ptr += strlen(query);
-            }
+            E.find.match_lines[E.find.num_matches] = match_row;
+            E.find.match_cols[E.find.num_matches] = match_col;
+            E.find.num_matches++;
+            ptr += query_len;
         }
+        free(full_text);
 
         if (E.find.num_matches > 0) {
             E.find.current_idx = 0;
@@ -2113,7 +2365,7 @@ void editorFindCallback(const char *query, int key) {
             int col = E.find.match_cols[0];
             E.cursor.x = col;
             E.cursor.y = row;
-            E.view.row_offset = E.buf.num_rows;
+            E.view.row_offset = E.buf.num_lines;
             E.cursor.preferred_x = E.cursor.x;
 
             if (row < E.view.row_offset)
@@ -2121,7 +2373,12 @@ void editorFindCallback(const char *query, int key) {
             else if (row >= E.view.row_offset + E.view.screen_rows)
                 E.view.row_offset = row - E.view.screen_rows + MARGIN;
 
-            int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
+            size_t render_line_len;
+            char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
+            int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
+            if (render_line_text)
+                free(render_line_text);
+
             int margin = strlen(query) + MARGIN;
             if (render_pos < E.view.col_offset)
                 E.view.col_offset = render_pos;
@@ -2147,7 +2404,12 @@ void editorFindCallback(const char *query, int key) {
             else if (row >= E.view.row_offset + E.view.screen_rows)
                 E.view.row_offset = row - E.view.screen_rows + MARGIN;
 
-            int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
+            size_t render_line_len;
+            char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
+            int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
+            if (render_line_text)
+                free(render_line_text);
+
             int margin = strlen(query) + MARGIN;
             if (render_pos < E.view.col_offset)
                 E.view.col_offset = render_pos;
@@ -2159,42 +2421,31 @@ void editorFindCallback(const char *query, int key) {
 }
 
 void editorScanLineMatches(int line, const char *query) {
-    int new_num_matches = 0;
-    int max_matches = E.find.num_matches + MATCH_BUFFER_PADDING;
-    int *new_lines = safeMalloc(sizeof(int) * max_matches);
-    int *new_cols = safeMalloc(sizeof(int) * max_matches);
-
-    for (int i = 0; i < E.find.num_matches; i++) {
-        if (E.find.match_lines[i] != line) {
-            new_lines[new_num_matches] = E.find.match_lines[i];
-            new_cols[new_num_matches] = E.find.match_cols[i];
-            new_num_matches++;
-        }
-    }
-
-    if (line < E.buf.num_rows) {
-        char *render_line = E.buf.rows[line].chars;
-        int query_len = strlen(query);
-        char *ptr = render_line;
-        while ((ptr = strstr(ptr, query)) != NULL) {
-            if (new_num_matches >= max_matches) {
-                max_matches *= 2;
-                new_lines = safeRealloc(new_lines, sizeof(int) * max_matches);
-                new_cols = safeRealloc(new_cols, sizeof(int) * max_matches);
-            }
-            
-            new_lines[new_num_matches] = line;
-            new_cols[new_num_matches] = ptr - render_line;
-            new_num_matches++;
-            ptr += query_len;
-        }
-    }
-
+    (void)line;
     free(E.find.match_lines);
     free(E.find.match_cols);
-    E.find.match_lines = new_lines;
-    E.find.match_cols = new_cols;
-    E.find.num_matches = new_num_matches;
+    E.find.match_lines = NULL;
+    E.find.match_cols = NULL;
+    E.find.num_matches = 0;
+    if (!query) return;
+
+    char *full_text = ptGetText(&E.buf.pt);
+    char *ptr = full_text;
+    int query_len = strlen(query);
+    while ((ptr = strstr(ptr, query)) != NULL) {
+        E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
+        E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
+
+        size_t match_offset = ptr - full_text;
+        int match_row, match_col;
+        editorOffsetToRowCol(&E.buf, match_offset, &match_row, &match_col);
+
+        E.find.match_lines[E.find.num_matches] = match_row;
+        E.find.match_cols[E.find.num_matches] = match_col;
+        E.find.num_matches++;
+        ptr += query_len;
+    }
+    free(full_text);
 }
 
 void editorReplace() {
@@ -2354,19 +2605,23 @@ void editorReplaceCallback(const char *query, int key) {
         E.find.num_matches = 0;
         E.find.current_idx = -1;
 
+        char *full_text = ptGetText(&E.buf.pt);
+        char *ptr = full_text;
         int query_len = strlen(query);
-        for (int i = 0; i < E.buf.num_rows; i++) {
-            char *line = E.buf.rows[i].render;
-            char *ptr = line;
-            while ((ptr = strstr(ptr, query)) != NULL) {
-                E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
-                E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
-                E.find.match_lines[E.find.num_matches] = i;
-                E.find.match_cols[E.find.num_matches] = ptr - line;
-                E.find.num_matches++;
-                ptr += query_len;
-            }
+        while ((ptr = strstr(ptr, query)) != NULL) {
+            E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
+            E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
+
+            size_t match_offset = ptr - full_text;
+            int match_row, match_col;
+            editorOffsetToRowCol(&E.buf, match_offset, &match_row, &match_col);
+
+            E.find.match_lines[E.find.num_matches] = match_row;
+            E.find.match_cols[E.find.num_matches] = match_col;
+            E.find.num_matches++;
+            ptr += query_len;
         }
+        free(full_text);
 
         if (E.find.num_matches > 0) {
             E.find.current_idx = 0;
@@ -2375,7 +2630,12 @@ void editorReplaceCallback(const char *query, int key) {
             E.cursor.y = row;
             E.cursor.x = col;
             E.view.row_offset = (row >= E.view.screen_rows) ? row - E.view.screen_rows + MARGIN : 0;
-            int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
+            size_t render_line_len;
+            char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
+            int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
+            if (render_line_text)
+                free(render_line_text);
+
             int margin = query_len + MARGIN;
             E.view.col_offset = (render_pos > margin) ? render_pos - (E.view.screen_cols - margin) : 0;
             if (E.view.col_offset < 0)
@@ -2386,32 +2646,23 @@ void editorReplaceCallback(const char *query, int key) {
 }
 
 int editorReplaceAll(const char *replace_str) {
-    char *find_str = E.find.query;
-    int find_len = strlen(find_str);
-    int replace_len = strlen(replace_str);
+    if (!E.find.query || !replace_str) return 0;
     int replaced_count = 0;
+    int find_len = strlen(E.find.query);
+    int replace_len = strlen(replace_str);
+    for (int i = E.find.num_matches - 1; i >= 0; i--) {
+        int row = E.find.match_lines[i];
+        int col = E.find.match_cols[i];
+        size_t offset = editorGetLogicalOffset(&E.buf, row, col);
 
-    for (int i = 0; i < E.buf.num_rows; i++) {
-        editorRow *row = &E.buf.rows[i];
+        ptDelete(&E.buf.pt, offset, find_len);
+        ptInsert(&E.buf.pt, offset, replace_str, replace_len);
+        replaced_count++;
+    }
 
-        int j = 0;
-        while (j <= row->size - find_len) {
-            if (strncmp(&row->chars[j], find_str, find_len) == 0) {
-                int new_size = row->size - find_len + replace_len;
-                char *new_chars = safeRealloc(row->chars, new_size + 1);
-                row->chars = new_chars;
-                memmove(&row->chars[j + replace_len], &row->chars[j + find_len], row->size - (j + find_len) + 1);
-                memcpy(&row->chars[j], replace_str, replace_len);
-                row->size = new_size;
-                row->chars[row->size] = '\0';
-
-                editorUpdateRow(row);
-                replaced_count++;
-                j += replace_len;
-            } else {
-                j++;
-            }
-        }
+    if (replaced_count > 0) {
+        E.buf.dirty = true;
+        editorUpdateLineOffsets(&E.buf);
     }
     return replaced_count;
 }
@@ -2424,7 +2675,13 @@ void editorReplaceJumpToCurrent() {
         E.cursor.y = row;
         E.cursor.preferred_x = E.cursor.x;
         E.view.row_offset = (row >= E.view.screen_rows) ? row - E.view.screen_rows + MARGIN : 0;
-        int render_pos = editorRowCxToRx(&E.buf.rows[row], E.cursor.x);
+
+        size_t render_line_len;
+        char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
+        int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
+        if (render_line_text)
+            free(render_line_text);
+
         int margin = strlen(E.find.query) + MARGIN;
         E.view.col_offset = (render_pos > margin) ? render_pos - (E.view.screen_cols - margin) : 0;
         if (E.view.col_offset < 0)
@@ -2437,23 +2694,19 @@ bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
 
     int row = E.find.match_lines[E.find.current_idx];
     int col = E.find.match_cols[E.find.current_idx];
-    editorRow *er = &E.buf.rows[row];
+    size_t offset = editorGetLogicalOffset(&E.buf, row, col);
+
     int find_len = strlen(find_str);
     int replace_len = strlen(replace_str);
 
-    int cx = editorRowRxToCx(er, col);
-    if (find_len != replace_len) {
-        er->chars = safeRealloc(er->chars, er->size + replace_len - find_len + 1);
-        memmove(&er->chars[cx + replace_len], &er->chars[cx + find_len], er->size - (cx + find_len) + 1);
-        er->size = er->size + replace_len - find_len;
-        er->chars[er->size] = '\0';
-    }
-    memcpy(&er->chars[cx], replace_str, replace_len);
+    ptDelete(&E.buf.pt, offset, find_len);
+    ptInsert(&E.buf.pt, offset, replace_str, replace_len);
 
-    editorUpdateRow(er);
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
+
     E.cursor.y = row;
-    E.cursor.x = cx + replace_len;
+    E.cursor.x = col + replace_len;
     E.cursor.preferred_x = E.cursor.x;
     return true;
 }
@@ -2548,38 +2801,38 @@ void editorCutSelection() {
 }
 
 void editorCutLine() {
-    if (E.cursor.y >= E.buf.num_rows) return;
+    if (E.cursor.y >= E.buf.num_lines) return;
 
-    editorRow *current_row = &E.buf.rows[E.cursor.y];
-    int line_length = current_row->size;
-    char *line_content = safeMalloc(line_length + 2);
-    memcpy(line_content, current_row->chars, line_length);
-    line_content[line_length] = '\n';
-    line_content[line_length + 1] = '\0';
+    size_t start_offset = editorGetLogicalOffset(&E.buf, E.cursor.y, 0);
+    size_t line_len = editorGetLineLength(&E.buf, E.cursor.y);
+
+    size_t delete_len = line_len;
+    if (E.cursor.y < E.buf.num_lines - 1) delete_len += 1;
+
+    char *line_content = safeMalloc(delete_len + 1);
+    ptReadLogical(&E.buf.pt, start_offset, delete_len, line_content);
 
     free(E.sel.clipboard);
     E.sel.clipboard = line_content;
-    clipboardCopyToSystem(E.sel.clipboard, line_length + 1);
-    editorDeleteRow(E.cursor.y);
+    clipboardCopyToSystem(E.sel.clipboard, delete_len);
 
-    if (E.cursor.y >= E.buf.num_rows && E.buf.num_rows > 0)
-        E.cursor.y = E.buf.num_rows - 1;
+    ptDelete(&E.buf.pt, start_offset, delete_len);
 
-    if (E.cursor.y >= 0 && E.cursor.y < E.buf.num_rows) {
-        int row_len = E.buf.rows[E.cursor.y].size;
-        E.cursor.x = E.cursor.x > row_len ? row_len : E.cursor.x;
-    }
-    else
-        E.cursor.x = 0;
+    if (E.cursor.y >= E.buf.num_lines && E.buf.num_lines > 0)
+        E.cursor.y = E.buf.num_lines - 1;
+
+    int current_len = editorGetLineLength(&E.buf, E.cursor.y);
+    E.cursor.x = E.cursor.x > current_len ? current_len : E.cursor.x;
     E.cursor.preferred_x = E.cursor.x;
 
     char sizebuf[SMALL_BUFFER_SIZE];
-    humanReadableSize(strlen(E.sel.clipboard), sizebuf, sizeof(sizebuf));
-
+    humanReadableSize(delete_len, sizebuf, sizeof(sizebuf));
     char msg[STATUS_LENGTH];
     snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
     editorSetStatusMsg(msg);
+    
     E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorJump() {
@@ -2615,11 +2868,11 @@ void editorJumpCallback(const char *buf, int key) {
 
     row = row > 0 ? row - 1 : 0;
     col = col > 0 ? col - 1 : 0;
-
-    if (row >= E.buf.num_rows) row = E.buf.num_rows - 1;
+    if (row >= E.buf.num_lines) row = E.buf.num_lines - 1;
     if (row < 0) row = 0;
     if (col < 0) col = 0;
-    if (row >= 0 && row < E.buf.num_rows && col > E.buf.rows[row].size) col = E.buf.rows[row].size;
+    if (row >= 0 && row < E.buf.num_lines && (size_t)col > editorGetLineLength(&E.buf, row)) 
+        col = editorGetLineLength(&E.buf, row);
 
     E.cursor.x = col;
     E.cursor.y = row;
@@ -2627,7 +2880,7 @@ void editorJumpCallback(const char *buf, int key) {
     editorScroll();
 }
 
-void freeEditorState(editorState *state) {
+void freeEditorState(EditorState *state) {
     if (state->buffer) free(state->buffer);
     state->buffer = NULL;
 }
@@ -2635,7 +2888,7 @@ void freeEditorState(editorState *state) {
 void saveEditorStateForUndo() {
     long now = currentMillis();
 
-    int should_save = !history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT);
+    int should_save = !history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT_MS);
     if (!should_save) {
         history.last_edit_time = now;
         return;
@@ -2647,13 +2900,13 @@ void saveEditorStateForUndo() {
 
     if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
         freeEditorState(&history.undo_stack[0]);
-        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(editorState) * (UNDO_REDO_STACK_SIZE - 1));
+        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(EditorState) * (UNDO_REDO_STACK_SIZE - 1));
         history.undo_stack[history.undo_top].buffer = NULL;
         history.undo_top--; 
     }
 
     history.undo_top++;
-    editorState *state = &history.undo_stack[history.undo_top];
+    EditorState *state = &history.undo_stack[history.undo_top];
     freeEditorState(state);
 
     state->buffer = editorRowsToString(&state->buf_len);
@@ -2665,21 +2918,10 @@ void saveEditorStateForUndo() {
     history.last_edit_time = now;
 }
 
-void restoreEditorState(const editorState *state) {
-    for (int i = 0; i < E.buf.num_rows; i++)
-        editorFreeRow(&E.buf.rows[i]);
-    free(E.buf.rows);
-    E.buf.rows = NULL;
-    E.buf.num_rows = 0;
-    E.buf.row_capacity = 0;
-
-    size_t start = 0;
-    for (size_t i = 0; i < state->buf_len; i++) {
-        if (state->buffer[i] == '\n') {
-            editorInsertRow(E.buf.num_rows, &state->buffer[start], i - start);
-            start = i + 1;
-        }
-    }
+void restoreEditorState(const EditorState *state) {
+    ptFree(&E.buf.pt);
+    ptInit(&E.buf.pt, state->buffer, state->buf_len);
+    editorUpdateLineOffsets(&E.buf);
 
     char *saved_clipboard = E.sel.clipboard;
     E.sel = state->sel;
@@ -2696,7 +2938,7 @@ void editorUndo() {
 
     if (history.redo_top < UNDO_REDO_STACK_SIZE - 1) {
         history.redo_top++;
-        editorState *state = &history.redo_stack[history.redo_top];
+        EditorState *state = &history.redo_stack[history.redo_top];
         freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
@@ -2704,7 +2946,7 @@ void editorUndo() {
         state->sel = E.sel;
     }
 
-    editorState *undo_st = &history.undo_stack[history.undo_top];
+    EditorState *undo_st = &history.undo_stack[history.undo_top];
     restoreEditorState(undo_st);
     freeEditorState(undo_st);
     history.undo_top--;
@@ -2719,7 +2961,7 @@ void editorRedo() {
 
     if (history.undo_top < UNDO_REDO_STACK_SIZE - 1) {
         history.undo_top++;
-        editorState *state = &history.undo_stack[history.undo_top];
+        EditorState *state = &history.undo_stack[history.undo_top];
         freeEditorState(state);
 
         state->buffer = editorRowsToString(&state->buf_len);
@@ -2727,7 +2969,7 @@ void editorRedo() {
         state->sel = E.sel;
     }
 
-    editorState *redo_st = &history.redo_stack[history.redo_top];
+    EditorState *redo_st = &history.redo_stack[history.redo_top];
     restoreEditorState(redo_st);
     freeEditorState(redo_st);
     history.redo_top--;
@@ -2747,10 +2989,17 @@ char getMatchingBracket(char ch) {
 }
 
 bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *match_x) {
-    if (cursor_y >= E.buf.num_rows || cursor_x >= E.buf.rows[cursor_y].size)
+    if (cursor_y >= E.buf.num_lines) return false;
+    
+    size_t line_len;
+    char *line_text = editorGetLine(&E.buf, cursor_y, &line_len);
+    if (!line_text || (size_t)cursor_x >= line_len) {
+        if (line_text) free(line_text);
         return false;
+    }
+    char bracket = line_text[cursor_x];
+    free(line_text);
 
-    char bracket = E.buf.rows[cursor_y].chars[cursor_x];
     if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
         return false;
 
@@ -2758,38 +3007,28 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
     int direction = (bracket == '(' || bracket == '{' || bracket == '[') ? 1 : -1;
     int count = 1;
 
-    int y = cursor_y;
-    int x = cursor_x;
+    char *full_text = ptGetText(&E.buf.pt);
+    size_t current_offset = editorGetLogicalOffset(&E.buf, cursor_y, cursor_x);
     while (1) {
         if (direction == 1) {
-            x++;
-            while (y < E.buf.num_rows && x >= E.buf.rows[y].size) {
-                y++;
-                x = 0;
-            }
-            if (y >= E.buf.num_rows) break;
+            current_offset++;
+            if (current_offset >= E.buf.pt.logical_size) break;
         } else {
-            x--;
-            while (y >= 0 && x < 0) {
-                y--;
-                if (y >= 0) x = E.buf.rows[y].size - 1;
-            }
-            if (y < 0) break;
+            if (current_offset == 0) break;
+            current_offset--;
         }
 
-        char ch = E.buf.rows[y].chars[x];
-        if (ch == bracket)
-            count++;
-        else if (ch == match)
-            count--;
+        char ch = full_text[current_offset];
+        if (ch == bracket) count++;
+        else if (ch == match) count--;
 
         if (count == 0) {
-            *match_y = y;
-            *match_x = x;
+            editorOffsetToRowCol(&E.buf, current_offset, match_y, match_x);
+            free(full_text);
             return true;
         }
     }
-
+    free(full_text);
     return false;
 }
 
