@@ -20,7 +20,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.3.0"
+#define CYPHER_VERSION      "1.3.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)     ((k) & 0x1f)
@@ -1871,9 +1871,11 @@ void editorMoveRowUp() {
         current_len++;
     }
 
+    editorBeginMacro();
     executeDelete(prev_start, prev_len + current_len);
     executeInsert(prev_start, current_text, current_len);
     executeInsert(prev_start + current_len, prev_text, prev_len);
+    editorEndMacro();
 
     free(prev_text);
     free(current_text);
@@ -1911,9 +1913,11 @@ void editorMoveRowDown() {
         next_len++;
     }
 
+    editorBeginMacro();
     executeDelete(current_start, current_len + next_len);
     executeInsert(current_start, next_text, next_len);
     executeInsert(current_start + next_len, current_text, current_len);
+    editorEndMacro();
 
     free(current_text);
     free(next_text);
@@ -2960,9 +2964,6 @@ void editorSave() {
     close(fd);
 
     if (success) {
-        E.buf.dirty = false;
-        E.buf.quit_times = QUIT_TIMES;
-        history.save_point = history.undo_top;
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
         if (rename(tmp_filename, E.buf.filename) == -1) {
@@ -2970,12 +2971,15 @@ void editorSave() {
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
         }
         else {
+            E.buf.dirty = false;
+            E.buf.quit_times = QUIT_TIMES;
+            history.save_point = history.undo_top;
+
             char msg[STATUS_LENGTH];
             snprintf(msg, sizeof(msg), "%s written to disk", sizebuf);
             editorSetStatusMsg(msg);
         }
-    }
-    else {
+    } else {
         unlink(tmp_filename);
         editorSetStatusMsg("Can't save! Write error on disk.");
     }
