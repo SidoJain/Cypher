@@ -107,6 +107,11 @@ typedef enum {
     BUFFER_ADD = 1
 } BufferSource;
 
+typedef enum {
+    CMD_INSERT,
+    CMD_DELETE
+} CommandType;
+
 typedef struct {
     BufferSource source;
     size_t start;
@@ -196,20 +201,24 @@ typedef struct {
 } AppendBuffer;
 
 typedef struct {
-    char *buffer;
-    size_t buf_len;
-    bool dirty;
+    CommandType type;
+    size_t offset;
+    char *text;
+    size_t len;
     EditorCursor cursor;
-    EditorSelection sel;
-} EditorState;
+    int transaction_id;
+} EditCommand;
 
 typedef struct {
-    EditorState undo_stack[UNDO_REDO_STACK_SIZE];
+    EditCommand undo_stack[UNDO_REDO_STACK_SIZE];
     int undo_top;
-    EditorState redo_stack[UNDO_REDO_STACK_SIZE];
+    EditCommand redo_stack[UNDO_REDO_STACK_SIZE];
     int redo_top;
     long last_edit_time;
     int undo_in_progress;
+    int current_transaction_id;
+    bool in_transaction;
+    int save_point;
 } EditorUndoRedo;
 
 /*** Global Data ***/
@@ -221,6 +230,9 @@ EditorUndoRedo history = {
     .redo_top = -1,
     .last_edit_time = 0,
     .undo_in_progress = 0,
+    .current_transaction_id = 0,
+    .in_transaction = false,
+    .save_point = -1,
 };
 
 /*** Function Prototypes ***/
@@ -307,9 +319,12 @@ void editorReplaceJumpToCurrent();
 bool editorReplaceCurrent(const char *, const char *);
 
 // undo-redo
-void freeEditorState(EditorState *);
-void saveEditorStateForUndo();
-void restoreEditorState(const EditorState *);
+void freeEditCommand(EditCommand *);
+void editorBeginMacro();
+void editorEndMacro();
+void recordCommand(CommandType, size_t, const char *, size_t, EditorCursor);
+void executeInsert(size_t, const char *, size_t);
+void executeDelete(size_t, size_t);
 void editorUndo();
 void editorRedo();
 
@@ -705,7 +720,6 @@ void editorProcessKeypress() {
             break;
 
         case CTRL_KEY('x'):     // cut
-            saveEditorStateForUndo();
             if (E.sel.active)
                 editorCutSelection();
             else
@@ -716,9 +730,11 @@ void editorProcessKeypress() {
         case PASTE_START:       // paste
             E.sel.is_pasting = true;
             E.sel.paste_len = 0;
+            editorBeginMacro();
             break;
         case PASTE_END:
             E.sel.is_pasting = false;
+            editorEndMacro();
             {
                 char sizebuf[SMALL_BUFFER_SIZE];
                 humanReadableSize(E.sel.paste_len, sizebuf, sizeof(sizebuf));
@@ -751,7 +767,6 @@ void editorProcessKeypress() {
 
         case '\r':              // enter
             if (E.sel.is_pasting) E.sel.paste_len++;
-            saveEditorStateForUndo();
             editorDeleteSelectedText();
             editorInsertNewline();
             updateMatchBracket();
@@ -759,7 +774,6 @@ void editorProcessKeypress() {
 
         case '\t':              // tab
             if (E.sel.is_pasting) E.sel.paste_len++;
-            saveEditorStateForUndo();
             editorInsertChar('\t');
             updateMatchBracket();
             break;
@@ -780,12 +794,10 @@ void editorProcessKeypress() {
             break;
 
         case DEL_KEY:
-            saveEditorStateForUndo();
             editorDeleteChar(0);
             updateMatchBracket();
             break;
         case BACKSPACE:
-            saveEditorStateForUndo();
             editorDeleteChar(1);
             updateMatchBracket();
             break;
@@ -930,7 +942,6 @@ void editorProcessKeypress() {
             if (!is_cntrl(ch)) {
                 if (E.sel.is_pasting) E.sel.paste_len++;
 
-                saveEditorStateForUndo();
                 if (E.sel.active) {
                     char closing = getClosingChar(ch);
                     if (closing != 0) {
@@ -1727,19 +1738,18 @@ void editorOffsetToRowCol(EditorBuffer *buf, size_t offset, int *row, int *col) 
 
 void editorInsertChar(int ch) {
     if (E.sel.active) {
-        saveEditorStateForUndo();
         editorDeleteSelectedText();
         E.sel.active = false;
     }
 
     size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
     char c = ch;
-    ptInsert(&E.buf.pt, offset, &c, 1);
+    executeInsert(offset, &c, 1);
     E.cursor.x++;
 
     char closing_char = getClosingChar(ch);
     if (!E.sel.is_pasting && closing_char)
-        ptInsert(&E.buf.pt, offset + 1, &closing_char, 1);
+        executeInsert(offset + 1, &closing_char, 1);
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
@@ -1762,9 +1772,9 @@ void editorDeleteChar(int is_backspace) {
         char next_char = (offset < E.buf.pt.logical_size) ? full_doc[offset] : '\0';
         char closing_char = getClosingChar(prev_char);
         if (closing_char && next_char == closing_char)
-            ptDelete(&E.buf.pt, offset - 1, 2); 
+            executeDelete(offset - 1, 2); 
         else
-            ptDelete(&E.buf.pt, offset - 1, 1);
+            executeDelete(offset - 1, 1);
 
         free(full_doc);
         if (E.cursor.x == 0) {
@@ -1775,7 +1785,7 @@ void editorDeleteChar(int is_backspace) {
             E.cursor.x--;
     }
     else if (offset < E.buf.pt.logical_size)
-        ptDelete(&E.buf.pt, offset, 1);
+        executeDelete(offset, 1);
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
@@ -1800,7 +1810,7 @@ void editorInsertNewline() {
         memcpy(insert_str + 1, line_text, indent_len);
     insert_str[indent_len + 1] = '\0';
 
-    ptInsert(&E.buf.pt, offset, insert_str, indent_len + 1);
+    executeInsert(offset, insert_str, indent_len + 1);
     if (E.cursor.x > 0 && line_text && line_len > (size_t)E.cursor.x && (line_text[E.cursor.x - 1] == '{' || line_text[E.cursor.x - 1] == '[' || line_text[E.cursor.x - 1] == '(')) {
         if (line_text[E.cursor.x] == getClosingChar(line_text[E.cursor.x - 1])) {
             int new_indent_len = indent_len + TAB_SIZE;
@@ -1809,7 +1819,7 @@ void editorInsertNewline() {
             memset(block_indent + 1, ' ', new_indent_len);
             block_indent[new_indent_len + 1] = '\0';
 
-            ptInsert(&E.buf.pt, offset + indent_len + 1, block_indent, new_indent_len + 1);
+            executeInsert(offset + indent_len + 1, block_indent, new_indent_len + 1);
             free(block_indent);
 
             E.cursor.y++;
@@ -1836,7 +1846,6 @@ void editorInsertNewline() {
 void editorMoveRowUp() {
     if (E.cursor.y <= 0) return;
     E.sel.active = false;
-    saveEditorStateForUndo();
 
     size_t prev_start = E.buf.line_offsets[E.cursor.y - 1];
     size_t current_start = E.buf.line_offsets[E.cursor.y];
@@ -1862,9 +1871,9 @@ void editorMoveRowUp() {
         current_len++;
     }
 
-    ptDelete(&E.buf.pt, prev_start, prev_len + current_len);
-    ptInsert(&E.buf.pt, prev_start, current_text, current_len);
-    ptInsert(&E.buf.pt, prev_start + current_len, prev_text, prev_len);
+    executeDelete(prev_start, prev_len + current_len);
+    executeInsert(prev_start, current_text, current_len);
+    executeInsert(prev_start + current_len, prev_text, prev_len);
 
     free(prev_text);
     free(current_text);
@@ -1876,7 +1885,6 @@ void editorMoveRowUp() {
 void editorMoveRowDown() {
     if (E.cursor.y >= E.buf.num_lines - 1) return;
     E.sel.active = false;
-    saveEditorStateForUndo();
 
     size_t current_start = E.buf.line_offsets[E.cursor.y];
     size_t next_start = E.buf.line_offsets[E.cursor.y + 1];
@@ -1903,9 +1911,9 @@ void editorMoveRowDown() {
         next_len++;
     }
 
-    ptDelete(&E.buf.pt, current_start, current_len + next_len);
-    ptInsert(&E.buf.pt, current_start, next_text, next_len);
-    ptInsert(&E.buf.pt, current_start + next_len, current_text, current_len);
+    executeDelete(current_start, current_len + next_len);
+    executeInsert(current_start, next_text, next_len);
+    executeInsert(current_start + next_len, current_text, current_len);
 
     free(current_text);
     free(next_text);
@@ -1916,8 +1924,6 @@ void editorMoveRowDown() {
 
 void editorCopyRowUp() {
     E.sel.active = false;
-    saveEditorStateForUndo();
-
     size_t current_start = E.buf.line_offsets[E.cursor.y];
     size_t current_end = (E.cursor.y == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 1];
     size_t current_len = current_end - current_start;
@@ -1932,7 +1938,7 @@ void editorCopyRowUp() {
         current_len++;
     }
 
-    ptInsert(&E.buf.pt, current_start, current_text, current_len);
+    executeInsert(current_start, current_text, current_len);
     free(current_text);
     E.cursor.y++;
     E.buf.dirty = true;
@@ -1941,8 +1947,6 @@ void editorCopyRowUp() {
 
 void editorCopyRowDown() {
     E.sel.active = false;
-    saveEditorStateForUndo();
-
     size_t current_start = E.buf.line_offsets[E.cursor.y];
     size_t current_end = (E.cursor.y == E.buf.num_lines - 1) ? E.buf.pt.logical_size : E.buf.line_offsets[E.cursor.y + 1];
     size_t current_len = current_end - current_start;
@@ -1956,10 +1960,10 @@ void editorCopyRowDown() {
         memcpy(insert_text + 1, current_text, current_len);
         insert_text[current_len + 1] = '\0';
 
-        ptInsert(&E.buf.pt, current_end, insert_text, current_len + 1);
+        executeInsert(current_end, insert_text, current_len + 1);
         free(insert_text);
     } else {
-        ptInsert(&E.buf.pt, current_end, current_text, current_len);
+        executeInsert(current_end, current_text, current_len);
     }
 
     free(current_text);
@@ -2035,7 +2039,7 @@ void editorDeleteSelectedText() {
     size_t end_offset = editorGetLogicalOffset(&E.buf, y2, x2);
     size_t length_to_delete = end_offset - start_offset;
     if (length_to_delete > 0)
-        ptDelete(&E.buf.pt, start_offset, length_to_delete);
+        executeDelete(start_offset, length_to_delete);
 
     E.cursor.x = x1;
     E.cursor.y = y1;
@@ -2104,8 +2108,7 @@ void editorCutLine() {
     E.sel.clipboard = line_content;
     clipboardCopyToSystem(E.sel.clipboard, delete_len);
 
-    ptDelete(&E.buf.pt, start_offset, delete_len);
-
+    executeDelete(start_offset, delete_len);
     if (E.cursor.y >= E.buf.num_lines && E.buf.num_lines > 0)
         E.cursor.y = E.buf.num_lines - 1;
 
@@ -2366,7 +2369,6 @@ void editorReplace() {
         return;
     }
 
-    bool first = true;
     int replaced = 0;
     bool done = false;
     int idx = E.find.current_idx < 0 ? 0 : E.find.current_idx;
@@ -2396,19 +2398,11 @@ void editorReplace() {
                 break;
             case 'a':
             case 'A':
-                if (first) {
-                    saveEditorStateForUndo();
-                    first = false;
-                }
                 replaced += editorReplaceAll(replace_query);
                 done = true;
                 break;
             case '\r':
             case '\n':
-                if (first) {
-                    saveEditorStateForUndo();
-                    first = false;
-                }
                 if (editorReplaceCurrent(find_query, replace_query)) {
                     replaced++;
                     editorScanLineMatches(E.cursor.y, find_query);
@@ -2531,6 +2525,8 @@ void editorReplaceCallback(const char *query, int key) {
 int editorReplaceAll(const char *replace_str) {
     if (!E.find.query || !replace_str) return 0;
     int replaced_count = 0;
+
+    editorBeginMacro();
     int find_len = strlen(E.find.query);
     int replace_len = strlen(replace_str);
     for (int i = E.find.num_matches - 1; i >= 0; i--) {
@@ -2538,11 +2534,12 @@ int editorReplaceAll(const char *replace_str) {
         int col = E.find.match_cols[i];
         size_t offset = editorGetLogicalOffset(&E.buf, row, col);
 
-        ptDelete(&E.buf.pt, offset, find_len);
-        ptInsert(&E.buf.pt, offset, replace_str, replace_len);
+        executeDelete(offset, find_len);
+        executeInsert(offset, replace_str, replace_len);
         replaced_count++;
     }
 
+    editorEndMacro();
     if (replaced_count > 0) {
         E.buf.dirty = true;
         editorUpdateLineOffsets(&E.buf);
@@ -2582,8 +2579,10 @@ bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
     int find_len = strlen(find_str);
     int replace_len = strlen(replace_str);
 
-    ptDelete(&E.buf.pt, offset, find_len);
-    ptInsert(&E.buf.pt, offset, replace_str, replace_len);
+    editorBeginMacro();
+    executeDelete(offset, find_len);
+    executeInsert(offset, replace_str, replace_len);
+    editorEndMacro();
 
     E.buf.dirty = true;
     editorUpdateLineOffsets(&E.buf);
@@ -2594,54 +2593,113 @@ bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
     return true;
 }
 
-void freeEditorState(EditorState *state) {
-    if (state->buffer) free(state->buffer);
-    state->buffer = NULL;
+void freeEditCommand(EditCommand *cmd) {
+    if (!cmd->text) return;
+    free(cmd->text);
+    cmd->text = NULL;
 }
 
-void saveEditorStateForUndo() {
+void editorBeginMacro() {
+    history.in_transaction = true;
+    history.current_transaction_id++;
+}
+
+void editorEndMacro() {
+    history.in_transaction = false;
+}
+
+void recordCommand(CommandType type, size_t offset, const char *text, size_t len, EditorCursor cursor) {
     long now = currentMillis();
-
-    int should_save = !history.undo_in_progress || (now - history.last_edit_time > UNDO_TIMEOUT_MS);
-    if (!should_save) {
-        history.last_edit_time = now;
-        return;
-    }
-
     for (int i = 0; i <= history.redo_top; i++)
-        freeEditorState(&history.redo_stack[i]);
+        freeEditCommand(&history.redo_stack[i]);
     history.redo_top = -1;
 
-    if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
-        freeEditorState(&history.undo_stack[0]);
-        memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(EditorState) * (UNDO_REDO_STACK_SIZE - 1));
-        history.undo_stack[history.undo_top].buffer = NULL;
-        history.undo_top--; 
+    if (history.save_point > history.undo_top)
+        history.save_point = -2;
+
+    bool merged = false;
+    if (history.undo_top >= 0 && !history.in_transaction) {
+        EditCommand *last_cmd = &history.undo_stack[history.undo_top];
+        long time_elapsed = now - history.last_edit_time;
+
+        if (time_elapsed < UNDO_TIMEOUT_MS && last_cmd->type == type && last_cmd->transaction_id == 0) {
+            if (type == CMD_INSERT && offset == last_cmd->offset + last_cmd->len) {
+                last_cmd->text = safeRealloc(last_cmd->text, last_cmd->len + len + 1);
+                memcpy(last_cmd->text + last_cmd->len, text, len);
+                last_cmd->len += len;
+                last_cmd->text[last_cmd->len] = '\0';
+                merged = true;
+            } 
+            else if (type == CMD_DELETE) {
+                if (offset + len == last_cmd->offset) {
+                    char *new_text = safeMalloc(last_cmd->len + len + 1);
+                    memcpy(new_text, text, len);
+                    memcpy(new_text + len, last_cmd->text, last_cmd->len);
+                    new_text[last_cmd->len + len] = '\0';
+                    free(last_cmd->text);
+                    last_cmd->text = new_text;
+                    last_cmd->offset = offset;
+                    last_cmd->len += len;
+                    merged = true;
+                } else if (offset == last_cmd->offset) {
+                    last_cmd->text = safeRealloc(last_cmd->text, last_cmd->len + len + 1);
+                    memcpy(last_cmd->text + last_cmd->len, text, len);
+                    last_cmd->len += len;
+                    last_cmd->text[last_cmd->len] = '\0';
+                    merged = true;
+                }
+            }
+        }
     }
 
-    history.undo_top++;
-    EditorState *state = &history.undo_stack[history.undo_top];
-    freeEditorState(state);
+    if (!merged) {
+        if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
+            freeEditCommand(&history.undo_stack[0]);
+            memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(EditCommand) * (UNDO_REDO_STACK_SIZE - 1));
+            history.undo_top--;
 
-    state->buffer = editorRowsToString(&state->buf_len);
-    state->cursor = E.cursor;
-    state->sel = E.sel;
-    state->dirty = E.buf.dirty;
+            if (history.save_point >= 0)
+                history.save_point--;
+            else if (history.save_point == -1)
+                history.save_point = -2;
+        }
 
-    history.undo_in_progress = 1;
+        history.undo_top++;
+        EditCommand *cmd = &history.undo_stack[history.undo_top];
+        cmd->type = type;
+        cmd->offset = offset;
+        cmd->len = len;
+        cmd->text = safeMalloc(len + 1);
+        memcpy(cmd->text, text, len);
+        cmd->text[len] = '\0';
+        cmd->cursor = cursor;
+        cmd->transaction_id = history.in_transaction ? history.current_transaction_id : 0; 
+    }
     history.last_edit_time = now;
 }
 
-void restoreEditorState(const EditorState *state) {
-    ptFree(&E.buf.pt);
-    ptInit(&E.buf.pt, state->buffer, state->buf_len);
-    editorUpdateLineOffsets(&E.buf);
+void executeInsert(size_t offset, const char *text, size_t len) {
+    if (len == 0) return;
 
-    char *saved_clipboard = E.sel.clipboard;
-    E.sel = state->sel;
-    E.sel.clipboard = saved_clipboard;
-    E.cursor = state->cursor;
-    E.buf.dirty = state->dirty;
+    recordCommand(CMD_INSERT, offset, text, len, E.cursor);
+
+    ptInsert(&E.buf.pt, offset, text, len);
+    E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
+}
+
+void executeDelete(size_t offset, size_t len) {
+    if (len == 0) return;
+
+    char *deleted_text = safeMalloc(len + 1);
+    ptReadLogical(&E.buf.pt, offset, len, deleted_text);
+
+    recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
+    free(deleted_text);
+
+    ptDelete(&E.buf.pt, offset, len);
+    E.buf.dirty = true;
+    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorUndo() {
@@ -2650,20 +2708,30 @@ void editorUndo() {
         return;
     }
 
-    if (history.redo_top < UNDO_REDO_STACK_SIZE - 1) {
+    int target_transaction = history.undo_stack[history.undo_top].transaction_id;
+    bool is_macro = (target_transaction != 0);
+
+    do {
+        if (history.undo_top < 0) break;
+        EditCommand *cmd = &history.undo_stack[history.undo_top];
+        if (is_macro && cmd->transaction_id != target_transaction) break;
+
         history.redo_top++;
-        EditorState *state = &history.redo_stack[history.redo_top];
-        freeEditorState(state);
+        history.redo_stack[history.redo_top] = *cmd;
+        history.redo_stack[history.redo_top].text = safeStrdup(cmd->text);
 
-        state->buffer = editorRowsToString(&state->buf_len);
-        state->cursor = E.cursor;
-        state->sel = E.sel;
-    }
+        if (cmd->type == CMD_INSERT)
+            ptDelete(&E.buf.pt, cmd->offset, cmd->len);
+        else if (cmd->type == CMD_DELETE)
+            ptInsert(&E.buf.pt, cmd->offset, cmd->text, cmd->len);
 
-    EditorState *undo_st = &history.undo_stack[history.undo_top];
-    restoreEditorState(undo_st);
-    freeEditorState(undo_st);
-    history.undo_top--;
+        E.cursor = cmd->cursor;
+        freeEditCommand(cmd);
+        history.undo_top--;
+    } while (is_macro);
+
+    editorUpdateLineOffsets(&E.buf);
+    E.buf.dirty = (history.undo_top != history.save_point);
     editorSetStatusMsg("Undid");
 }
 
@@ -2673,20 +2741,29 @@ void editorRedo() {
         return;
     }
 
-    if (history.undo_top < UNDO_REDO_STACK_SIZE - 1) {
+    int target_transaction = history.redo_stack[history.redo_top].transaction_id;
+    bool is_macro = (target_transaction != 0);
+
+    do {
+        if (history.redo_top < 0) break;
+        EditCommand *cmd = &history.redo_stack[history.redo_top];
+        if (is_macro && cmd->transaction_id != target_transaction) break;
+
         history.undo_top++;
-        EditorState *state = &history.undo_stack[history.undo_top];
-        freeEditorState(state);
+        history.undo_stack[history.undo_top] = *cmd;
+        history.undo_stack[history.undo_top].text = safeStrdup(cmd->text);
 
-        state->buffer = editorRowsToString(&state->buf_len);
-        state->cursor = E.cursor;
-        state->sel = E.sel;
-    }
+        if (cmd->type == CMD_INSERT)
+            ptInsert(&E.buf.pt, cmd->offset, cmd->text, cmd->len);
+        else if (cmd->type == CMD_DELETE)
+            ptDelete(&E.buf.pt, cmd->offset, cmd->len);
 
-    EditorState *redo_st = &history.redo_stack[history.redo_top];
-    restoreEditorState(redo_st);
-    freeEditorState(redo_st);
-    history.redo_top--;
+        freeEditCommand(cmd);
+        history.redo_top--;
+    } while (is_macro);
+
+    editorUpdateLineOffsets(&E.buf);
+    E.buf.dirty = (history.undo_top != history.save_point);
     editorSetStatusMsg("Redid");
 }
 
@@ -2812,6 +2889,7 @@ void editorOpen(const char *filename) {
     fclose(fp);
     editorUpdateLineOffsets(&E.buf);
     E.buf.dirty = false;
+    history.save_point = history.undo_top;
 }
 
 void editorSave() {
@@ -2884,6 +2962,7 @@ void editorSave() {
     if (success) {
         E.buf.dirty = false;
         E.buf.quit_times = QUIT_TIMES;
+        history.save_point = history.undo_top;
         char sizebuf[SMALL_BUFFER_SIZE];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
         if (rename(tmp_filename, E.buf.filename) == -1) {
