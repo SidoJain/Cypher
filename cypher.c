@@ -36,6 +36,10 @@
 #define BUFFER_SIZE             128
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
+#define DEFAULT_FILE_PERMS      0644
+#define DEFAULT_AB_CAPACITY     1024
+#define DEFAULT_ROW_CAPACITY    32
+#define MATCH_BUFFER_PADDING    50
 
 #define NEW_LINE                "\r\n"
 #define ESCAPE_CHAR             '\x1b'
@@ -611,7 +615,7 @@ int editorReadKey() {
                         if (read(STDIN_FILENO, &cx, 1) != 1) return ESCAPE_CHAR;
                         if (read(STDIN_FILENO, &cy, 1) != 1) return ESCAPE_CHAR;
 
-                        int button = cb - SMALL_BUFFER_SIZE;
+                        int button = cb - ' ';
                         if (button == 64) return MOUSE_SCROLL_UP;
                         else if (button == 65) return MOUSE_SCROLL_DOWN;
                         return ESCAPE_CHAR;
@@ -1445,7 +1449,7 @@ void editorCleanup() {
 
 void abAppend(appendBuffer *ab, const char *str, int len) {
     if (ab->len + len >= ab->capacity) {
-        int new_capacity = ab->capacity == 0 ? 1024 : ab->capacity * 2;
+        int new_capacity = ab->capacity == 0 ? DEFAULT_AB_CAPACITY : ab->capacity * 2;
         while (new_capacity < ab->len + len)
             new_capacity *= 2;
 
@@ -1543,10 +1547,10 @@ void editorSave() {
     char *tmp_filename = safeMalloc(len);
     snprintf(tmp_filename, len, "%s.tmp", E.buf.filename);
 
-    mode_t file_mode = 0644;
+    mode_t file_mode = DEFAULT_FILE_PERMS;
     struct stat st;
     if (stat(E.buf.filename, &st) == 0)
-        file_mode = st.st_mode; // Keep existing permissions
+        file_mode = st.st_mode; // keep existing permissions
     int fd = open(tmp_filename,
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
@@ -1611,7 +1615,7 @@ void panicSave(int signum) {
     if (E.buf.filename && E.buf.rows) {
         char path[BUFFER_SIZE];
         snprintf(path, sizeof(path), "%s.crash", E.buf.filename);
-        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, DEFAULT_FILE_PERMS);
         if (fd != -1) {
             for (int i = 0; i < E.buf.num_rows; i++) {
                 write(fd, E.buf.rows[i].chars, E.buf.rows[i].size);
@@ -1641,7 +1645,7 @@ void editorInsertRow(int at, const char *str, size_t len) {
     if (at < 0 || at > E.buf.num_rows) return;
 
     if (E.buf.num_rows >= E.buf.row_capacity) {
-        int new_capacity = E.buf.row_capacity == 0 ? 32 : E.buf.row_capacity * 2;
+        int new_capacity = E.buf.row_capacity == 0 ? DEFAULT_ROW_CAPACITY : E.buf.row_capacity * 2;
         E.buf.rows = safeRealloc(E.buf.rows, sizeof(editorRow) * new_capacity);
         E.buf.row_capacity = new_capacity;
     }
@@ -2160,8 +2164,7 @@ void editorFindCallback(const char *query, int key) {
 
 void editorScanLineMatches(int line, const char *query) {
     int new_num_matches = 0;
-
-    int max_matches = E.find.num_matches + 50;
+    int max_matches = E.find.num_matches + MATCH_BUFFER_PADDING;
     int *new_lines = safeMalloc(sizeof(int) * max_matches);
     int *new_cols = safeMalloc(sizeof(int) * max_matches);
 
