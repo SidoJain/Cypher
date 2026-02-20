@@ -365,6 +365,10 @@ int main(int argc, char *argv[]) {
     editorInit();
     if (argc >= 2)
         editorOpen(argv[1]);
+    else {
+        ptInit(&E.buf.pt, "", 0);
+        editorUpdateLineOffsets(&E.buf);
+    }
 
     editorSetStatusMsg("HELP: Ctrl-H");
     while (1) {
@@ -1401,7 +1405,6 @@ void editorJump() {
     int saved_row_offset = E.view.row_offset;
 
     char *input = editorPrompt("Jump to (row:col): %s (ESC to cancel)", editorJumpCallback, NULL);
-
     if (input) {
         free(input);
         if (E.cursor.x == saved_cursor_x && E.cursor.y == saved_cursor_y && E.view.col_offset == saved_col_offset && E.view.row_offset == saved_row_offset)
@@ -1474,18 +1477,23 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
     memcpy(pt->add_buf + pt->add_len, text, text_len);
     pt->add_len += text_len;
 
-    Piece new_piece = {BUFFER_ADD, new_piece_start, text_len};
-    pt->logical_size += text_len;
+    Piece new_piece = {
+        .source = BUFFER_ADD,
+        .start = new_piece_start,
+        .length = text_len
+    };
 
     if (pt->num_pieces == 0) {
         pt->pieces[0] = new_piece;
         pt->num_pieces = 1;
+        pt->logical_size += text_len;
         return;
     }
 
-    size_t piece_idx, piece_offset;
+    size_t piece_idx = 0, piece_offset = 0;
     ptFindPiece(pt, offset, &piece_idx, &piece_offset);
     Piece target = pt->pieces[piece_idx];
+
     if (piece_offset == 0) {
         if (pt->num_pieces + 1 > pt->piece_capacity) {
             pt->piece_capacity *= 2;
@@ -1505,7 +1513,6 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
     } else {
         Piece left = {target.source, target.start, piece_offset};
         Piece right = {target.source, target.start + piece_offset, target.length - piece_offset};
-
         if (pt->num_pieces + 2 > pt->piece_capacity) {
             pt->piece_capacity *= 2;
             pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
@@ -1517,6 +1524,7 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
         pt->pieces[piece_idx + 2] = right;
         pt->num_pieces += 2;
     }
+    pt->logical_size += text_len;
 }
 
 void ptDelete(PieceTable *pt, size_t offset, size_t len) {
@@ -1541,7 +1549,6 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
         } else {
             Piece left = {target.source, target.start, start_offset};
             Piece right = {target.source, target.start + end_offset, target.length - end_offset};
-
             if (pt->num_pieces + 1 > pt->piece_capacity) {
                 pt->piece_capacity *= 2;
                 pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
@@ -1564,7 +1571,7 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
         }
 
         if (pieces_to_remove > 0) {
-            memmove(&pt->pieces[start_idx + 1], &pt->pieces[start_idx + 1 + pieces_to_remove], sizeof(Piece) * (pt->num_pieces - (start_idx + 1 + pieces_to_remove)));
+            memmove(&pt->pieces[start_idx + 1], &pt->pieces[start_idx + pieces_to_remove + 1], sizeof(Piece) * (pt->num_pieces - (start_idx + pieces_to_remove + 1)));
             pt->num_pieces -= pieces_to_remove;
         }
     }
@@ -1681,7 +1688,6 @@ size_t editorGetLineLength(EditorBuffer *buf, int line_idx) {
         end_offset = buf->pt.logical_size;
     else
         end_offset = buf->line_offsets[line_idx + 1] - 1;
-
     return end_offset - start_offset;
 }
 
@@ -1696,7 +1702,6 @@ size_t editorGetLogicalOffset(EditorBuffer *buf, int cursor_y, int cursor_x) {
 
     if ((size_t)cursor_x > line_len) cursor_x = line_len;
     if (cursor_x < 0) cursor_x = 0;
-
     return line_start + cursor_x;
 }
 
@@ -1789,22 +1794,22 @@ void editorInsertNewline() {
         if (E.sel.is_pasting) indent_len = 0;
     }
 
-    char *insert_str = safeMalloc(1 + indent_len + 1);
+    char *insert_str = safeMalloc(indent_len + 2);
     insert_str[0] = '\n';
     if (indent_len > 0)
         memcpy(insert_str + 1, line_text, indent_len);
-    insert_str[1 + indent_len] = '\0';
+    insert_str[indent_len + 1] = '\0';
 
-    ptInsert(&E.buf.pt, offset, insert_str, 1 + indent_len);
+    ptInsert(&E.buf.pt, offset, insert_str, indent_len + 1);
     if (E.cursor.x > 0 && line_text && line_len > (size_t)E.cursor.x && (line_text[E.cursor.x - 1] == '{' || line_text[E.cursor.x - 1] == '[' || line_text[E.cursor.x - 1] == '(')) {
         if (line_text[E.cursor.x] == getClosingChar(line_text[E.cursor.x - 1])) {
             int new_indent_len = indent_len + TAB_SIZE;
-            char *block_indent = safeMalloc(1 + new_indent_len + 1);
+            char *block_indent = safeMalloc(new_indent_len + 2);
             block_indent[0] = '\n';
             memset(block_indent + 1, ' ', new_indent_len);
-            block_indent[1 + new_indent_len] = '\0';
+            block_indent[new_indent_len + 1] = '\0';
 
-            ptInsert(&E.buf.pt, offset + 1 + indent_len, block_indent, 1 + new_indent_len);
+            ptInsert(&E.buf.pt, offset + indent_len + 1, block_indent, new_indent_len + 1);
             free(block_indent);
 
             E.cursor.y++;
@@ -2385,7 +2390,7 @@ void editorReplace() {
                 break;
             case ARROW_UP:
             case ARROW_LEFT:
-                idx = (idx - 1 + E.find.num_matches) % E.find.num_matches;
+                idx = (idx + E.find.num_matches - 1) % E.find.num_matches;
                 E.find.current_idx = idx;
                 editorReplaceJumpToCurrent();
                 break;
