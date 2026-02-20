@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <termios.h>
 #include <unistd.h>
 #include <errno.h>
@@ -64,11 +65,6 @@
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 
 /*** Structs and Enums ***/
-
-typedef enum {
-    false = 0,
-    true = 1
-} bool;
 
 typedef enum {
     BACKSPACE = 127,
