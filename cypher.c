@@ -948,12 +948,21 @@ void editorProcessKeypress() {
                         char *selected = editorGetSelectedText(NULL);
                         if (selected) {
                             int selected_len = strlen(selected);
-
+                            editorBeginMacro();
                             editorDeleteSelectedText();
-                            editorInsertChar(ch);
-                            for (int i = 0; i < selected_len; i++)
-                                editorInsertChar(selected[i]);
+                            editorInsertChar(ch); 
 
+                            bool was_pasting = E.sel.is_pasting;
+                            E.sel.is_pasting = true;
+                            for (int i = 0; i < selected_len; i++) {
+                                if (selected[i] == '\n')
+                                    editorInsertNewline();
+                                else if (selected[i] != '\r')
+                                    editorInsertChar(selected[i]);
+                            }
+
+                            E.sel.is_pasting = was_pasting;
+                            editorEndMacro();
                             free(selected);
                             updateMatchBracket();
                             break;
