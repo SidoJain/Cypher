@@ -1804,41 +1804,61 @@ void editorInsertNewline() {
         if (E.sel.is_pasting) indent_len = 0;
     }
 
-    char *insert_str = safeMalloc(indent_len + 2);
-    insert_str[0] = '\n';
-    if (indent_len > 0)
-        memcpy(insert_str + 1, line_text, indent_len);
-    insert_str[indent_len + 1] = '\0';
+    char prev_char = (E.cursor.x > 0 && line_text) ? line_text[E.cursor.x - 1] : '\0';
+    char curr_char = ((size_t)E.cursor.x < line_len && line_text) ? line_text[E.cursor.x] : '\0';
+    bool is_between_brackets = ((prev_char == '{' && curr_char == '}') || (prev_char == '[' && curr_char == ']') || (prev_char == '(' && curr_char == ')'));
+    bool just_opened_bracket = (prev_char == '{' || prev_char == '[' || prev_char == '(');
 
-    executeInsert(offset, insert_str, indent_len + 1);
-    if (E.cursor.x > 0 && line_text && line_len > (size_t)E.cursor.x && (line_text[E.cursor.x - 1] == '{' || line_text[E.cursor.x - 1] == '[' || line_text[E.cursor.x - 1] == '(')) {
-        if (line_text[E.cursor.x] == getClosingChar(line_text[E.cursor.x - 1])) {
-            int new_indent_len = indent_len + TAB_SIZE;
-            char *block_indent = safeMalloc(new_indent_len + 2);
-            block_indent[0] = '\n';
-            memset(block_indent + 1, ' ', new_indent_len);
-            block_indent[new_indent_len + 1] = '\0';
+    if (is_between_brackets) {
+        int total_len = (indent_len + TAB_SIZE + 1) + (indent_len + 1);
+        char *insert_str = safeMalloc(total_len + 1);
 
-            executeInsert(offset + indent_len + 1, block_indent, new_indent_len + 1);
-            free(block_indent);
+        int pos = 0;
+        insert_str[pos++] = '\n';
+        if (indent_len > 0) { memcpy(insert_str + pos, line_text, indent_len); pos += indent_len; }
+        memset(insert_str + pos, ' ', TAB_SIZE); pos += TAB_SIZE;
 
-            E.cursor.y++;
-            E.cursor.x = new_indent_len;
-            E.cursor.preferred_x = E.cursor.x;
+        insert_str[pos++] = '\n';
+        if (indent_len > 0) { memcpy(insert_str + pos, line_text, indent_len); pos += indent_len; }
+        insert_str[pos] = '\0';
 
-            free(insert_str);
-            free(line_text);
-            editorUpdateLineOffsets(&E.buf);
-            return;
-        }
+        executeInsert(offset, insert_str, total_len);
+        free(insert_str);
+
+        E.cursor.y++;
+        E.cursor.x = indent_len + TAB_SIZE;
+    } else if (just_opened_bracket) {
+        int total_len = indent_len + TAB_SIZE + 1;
+        char *insert_str = safeMalloc(total_len + 1);
+
+        int pos = 0;
+        insert_str[pos++] = '\n';
+        if (indent_len > 0) { memcpy(insert_str + pos, line_text, indent_len); pos += indent_len; }
+        memset(insert_str + pos, ' ', TAB_SIZE); pos += TAB_SIZE;
+        insert_str[pos] = '\0';
+
+        executeInsert(offset, insert_str, total_len);
+        free(insert_str);
+
+        E.cursor.y++;
+        E.cursor.x = indent_len + TAB_SIZE;
+    } else {
+        int total_len = indent_len + 1;
+        char *insert_str = safeMalloc(total_len + 1);
+
+        insert_str[0] = '\n';
+        if (indent_len > 0) memcpy(insert_str + 1, line_text, indent_len);
+        insert_str[total_len] = '\0';
+
+        executeInsert(offset, insert_str, total_len);
+        free(insert_str);
+
+        E.cursor.y++;
+        E.cursor.x = indent_len;
     }
 
-    E.cursor.y++;
-    E.cursor.x = indent_len;
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
-
-    free(insert_str);
     if (line_text) free(line_text);
     editorUpdateLineOffsets(&E.buf);
 }
