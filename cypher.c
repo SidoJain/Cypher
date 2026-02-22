@@ -374,8 +374,11 @@ int main(int argc, char *argv[]) {
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, NULL);
 
-    signal(SIGSEGV, panicSave); // Catch Segfaults
-    signal(SIGABRT, panicSave); // Catch Aborts
+    signal(SIGSEGV, panicSave); // catch segfaults
+    signal(SIGABRT, panicSave); // catch aborts
+    signal(SIGHUP, panicSave);  // catch terminal close / ssh drop
+    signal(SIGTERM, panicSave); // catch os shutdown / kill command
+    signal(SIGPIPE, SIG_IGN);
 
     editorInit();
     if (argc >= 2)
@@ -480,6 +483,7 @@ void editorQuit() {
 void die(const char *str) {
     write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
     perror(str);
+    panicSave(SIGTERM);
     exit(1);
 }
 
@@ -3059,14 +3063,22 @@ void editorSave() {
 }
 
 void panicSave(int signum) {
-    if (E.buf.filename && E.buf.pt.pieces) {
+    if (E.buf.dirty && E.buf.pt.pieces) {
         char path[BUFFER_SIZE];
-        snprintf(path, sizeof(path), "%s.crash", E.buf.filename);
+        size_t i = 0;
+        const char *name = E.buf.filename ? E.buf.filename : "Untitled";
+        while (*name && i < sizeof(path) - 8)
+            path[i++] = *name++;
+
+        const char *ext = ".crash";
+        while (*ext && i < sizeof(path) - 1)
+            path[i++] = *ext++;
+        path[i] = '\0';
 
         int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, DEFAULT_FILE_PERMS);
         if (fd != -1) {
-            for (size_t i = 0; i < E.buf.pt.num_pieces; i++) {
-                Piece p = E.buf.pt.pieces[i];
+            for (size_t j = 0; j < E.buf.pt.num_pieces; j++) {
+                Piece p = E.buf.pt.pieces[j];
                 if (p.length == 0) continue;
 
                 char *source = (p.source == BUFFER_ORIGINAL) ? E.buf.pt.orig_buf : E.buf.pt.add_buf;
@@ -3075,6 +3087,7 @@ void panicSave(int signum) {
             close(fd);
         }
     }
+
     signal(signum, SIG_DFL);
     raise(signum);
 }
