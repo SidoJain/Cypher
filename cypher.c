@@ -1514,6 +1514,21 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
     ptFindPiece(pt, offset, &piece_idx, &piece_offset);
     Piece target = pt->pieces[piece_idx];
 
+    if (piece_offset == 0 && piece_idx > 0) {
+        Piece *prev = &pt->pieces[piece_idx - 1];
+        if (prev->source == BUFFER_ADD && prev->start + prev->length == new_piece_start) {
+            prev->length += text_len;
+            pt->logical_size += text_len;
+            return;
+        }
+    }
+
+    if (piece_offset == target.length && target.source == BUFFER_ADD && target.start + target.length == new_piece_start) {
+        pt->pieces[piece_idx].length += text_len;
+        pt->logical_size += text_len;
+        return;
+    }
+
     if (piece_offset == 0) {
         if (pt->num_pieces + 1 > pt->piece_capacity) {
             pt->piece_capacity *= 2;
@@ -1595,6 +1610,19 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
             pt->num_pieces -= pieces_to_remove;
         }
     }
+
+    for (size_t i = 0; i < pt->num_pieces - 1; ) {
+        Piece *p1 = &pt->pieces[i];
+        Piece *p2 = &pt->pieces[i + 1];
+        if (p1->source == p2->source && p1->start + p1->length == p2->start) {
+            p1->length += p2->length;
+            memmove(p2, p2 + 1, sizeof(Piece) * (pt->num_pieces - i - 2));
+            pt->num_pieces--;
+        } else {
+            i++;
+        }
+    }
+
     pt->logical_size -= len;
 }
 
@@ -1762,7 +1790,6 @@ void editorInsertChar(int ch) {
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorDeleteChar(int is_backspace) {
@@ -1798,7 +1825,6 @@ void editorDeleteChar(int is_backspace) {
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorInsertNewline() {
@@ -1869,7 +1895,6 @@ void editorInsertNewline() {
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
     if (line_text) free(line_text);
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorMoveRowUp() {
@@ -1910,7 +1935,6 @@ void editorMoveRowUp() {
     free(current_text);
     E.cursor.y--;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorMoveRowDown() {
@@ -1952,7 +1976,6 @@ void editorMoveRowDown() {
     free(next_text);
     E.cursor.y++;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorCopyRowUp() {
@@ -1975,7 +1998,6 @@ void editorCopyRowUp() {
     free(current_text);
     E.cursor.y++;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorCopyRowDown() {
@@ -2001,7 +2023,6 @@ void editorCopyRowDown() {
 
     free(current_text);
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorSelectText(int ch) {
@@ -2079,7 +2100,6 @@ void editorDeleteSelectedText() {
     E.cursor.preferred_x = E.cursor.x;
     E.sel.active = false;
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void editorCopySelection() {
@@ -2149,14 +2169,12 @@ void editorCutLine() {
     E.cursor.x = E.cursor.x > current_len ? current_len : E.cursor.x;
     E.cursor.preferred_x = E.cursor.x;
 
+    E.buf.dirty = true;
     char sizebuf[SMALL_BUFFER_SIZE];
     humanReadableSize(delete_len, sizebuf, sizeof(sizebuf));
     char msg[STATUS_LENGTH];
     snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
     editorSetStatusMsg(msg);
-    
-    E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
 }
 
 void clipboardCopyToSystem(const char *data, int len) {
@@ -2573,10 +2591,8 @@ int editorReplaceAll(const char *replace_str) {
     }
 
     editorEndMacro();
-    if (replaced_count > 0) {
+    if (replaced_count > 0)
         E.buf.dirty = true;
-        editorUpdateLineOffsets(&E.buf);
-    }
     return replaced_count;
 }
 
@@ -2618,8 +2634,6 @@ bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
     editorEndMacro();
 
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
-
     E.cursor.y = row;
     E.cursor.x = col + replace_len;
     E.cursor.preferred_x = E.cursor.x;
@@ -2714,25 +2728,54 @@ void recordCommand(CommandType type, size_t offset, const char *text, size_t len
 void executeInsert(size_t offset, const char *text, size_t len) {
     if (len == 0) return;
 
-    recordCommand(CMD_INSERT, offset, text, len, E.cursor);
+    int row, col;
+    editorOffsetToRowCol(&E.buf, offset, &row, &col);
 
+    recordCommand(CMD_INSERT, offset, text, len, E.cursor);
     ptInsert(&E.buf.pt, offset, text, len);
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
+
+    bool has_nl = false;
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '\n') {
+            has_nl = true;
+            break;
+        }
+    }
+
+    if (!has_nl)
+        for (int i = row + 1; i < E.buf.num_lines; i++)
+            E.buf.line_offsets[i] += len;
+    else
+        editorUpdateLineOffsets(&E.buf);
 }
 
 void executeDelete(size_t offset, size_t len) {
     if (len == 0) return;
 
+    int row, col;
+    editorOffsetToRowCol(&E.buf, offset, &row, &col);
+
     char *deleted_text = safeMalloc(len + 1);
     ptReadLogical(&E.buf.pt, offset, len, deleted_text);
 
-    recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
-    free(deleted_text);
+    bool has_nl = false;
+    for (size_t i = 0; i < len; i++) {
+        if (deleted_text[i] == '\n') {
+            has_nl = true;
+            break;
+        }
+    }
 
+    recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
     ptDelete(&E.buf.pt, offset, len);
     E.buf.dirty = true;
-    editorUpdateLineOffsets(&E.buf);
+    if (!has_nl)
+        for (int i = row + 1; i < E.buf.num_lines; i++)
+            E.buf.line_offsets[i] -= len;
+    else
+        editorUpdateLineOffsets(&E.buf);
+    free(deleted_text);
 }
 
 void editorUndo() {
