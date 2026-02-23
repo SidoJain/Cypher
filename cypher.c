@@ -35,6 +35,7 @@
 #define STATUS_LENGTH           80
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
+#define LARGE_BUFFER_SIZE       1024
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
 #define DEFAULT_FILE_PERMS      0644
@@ -3042,7 +3043,7 @@ void editorSave() {
 
 void panicSave(int signum) {
     if (E.buf.dirty && E.buf.pt.pieces) {
-        char path[BUFFER_SIZE];
+        char path[LARGE_BUFFER_SIZE];
         size_t i = 0;
         const char *ext = "_tmp.txt";
         const char *name = E.buf.filename ? E.buf.filename : "untitled";
