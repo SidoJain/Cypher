@@ -1614,19 +1614,6 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
             pt->num_pieces -= pieces_to_remove;
         }
     }
-
-    for (size_t i = 0; i < pt->num_pieces - 1; ) {
-        Piece *p1 = &pt->pieces[i];
-        Piece *p2 = &pt->pieces[i + 1];
-        if (p1->source == p2->source && p1->start + p1->length == p2->start) {
-            p1->length += p2->length;
-            memmove(p2, p2 + 1, sizeof(Piece) * (pt->num_pieces - i - 2));
-            pt->num_pieces--;
-        } else {
-            i++;
-        }
-    }
-
     pt->logical_size -= len;
 }
 
@@ -2981,15 +2968,6 @@ void editorSave() {
             return;
         }
 
-        if (strchr(input, '.') == NULL) {
-            size_t len = strlen(input);
-            char *new_name = safeMalloc(len + 5);
-
-            strcpy(new_name, input);
-            strcat(new_name, ".txt");
-            free(input);
-            input = new_name;
-        }
         E.buf.filename = input;
         new_file = true;
     }
@@ -3066,11 +3044,11 @@ void panicSave(int signum) {
     if (E.buf.dirty && E.buf.pt.pieces) {
         char path[BUFFER_SIZE];
         size_t i = 0;
-        const char *name = E.buf.filename ? E.buf.filename : "Untitled";
-        while (*name && i < sizeof(path) - 8)
+        const char *ext = "_tmp.txt";
+        const char *name = E.buf.filename ? E.buf.filename : "untitled";
+        while (*name && i < sizeof(path) - strlen(ext))
             path[i++] = *name++;
 
-        const char *ext = ".crash";
         while (*ext && i < sizeof(path) - 1)
             path[i++] = *ext++;
         path[i] = '\0';
