@@ -1,6 +1,6 @@
 # Cypher - Terminal Text Editor
 
-Cypher is a lightweight terminal-based text editor written in C.  
+Cypher is a lightweight terminal-based text editor written in C, featuring native Tree-sitter semantic syntax highlighting.
 It runs in the terminal in **raw mode**.  
 This README file has been completely written using Cypher.  
 
@@ -49,6 +49,12 @@ This README file has been completely written using Cypher.
   - Displays filename, total lines and cursor line.
   - Temporary message area for prompts, warnings, information.
 
+- **Syntax Highlighting (Tree-sitter)**
+  - Semantic Parsing: Uses Abstract Syntax Trees (ASTs) instead of brittle regular expressions for flawless, context-aware code highlighting.
+  - Dynamic Language Loading: Automatically loads language parsers at runtime via `.so` shared libraries. Adding a new language (C, Python, Rust, Go, etc.) requires zero recompilation of the core editor.
+  - True Color (24-bit) Rendering: Renders rich, high-fidelity RGB colors directly in your terminal.
+  - Hot-Swappable Themes: Fully customizable styling via a simple theme.config file. Map specific AST nodes directly to hex codes to recreate themes like VS Code Dark+ (default).
+
 ## Keyboard Shortcuts
 
 | Shortcut                              | Action                            |
@@ -65,6 +71,7 @@ This README file has been completely written using Cypher.
 | `Ctrl-G / L`                          | Jump to line                      |
 | `Ctrl-Z`                              | Undo last major change            |
 | `Ctrl-Y`                              | Redo last major change            |
+| `Ctrl-D`                              | Debug Tree-Sitter Capture         |
 | `Arrow Keys`                          | Move cursor                       |
 | `Home / End`                          | Move to start / end of line       |
 | `Page Up`                             | Scroll up by one screen           |
@@ -116,6 +123,16 @@ set -s escape-time 0
 
 - Size Constraints: Most terminal emulators limit OSC 52 transfers to approximately 74 KB. Large copy operations exceeding this limit may fail silently.
 - Security Settings: Some Linux distributions or hardened terminal configurations disable clipboard writing by default to prevent malicious scripts from altering your clipboard.
+
+## Tree Sitter Setup
+
+To utilize Cypher's semantic syntax highlighting, ensure the following files are present in the directory where Cypher is executed:
+
+1. `theme.config`: A plain text file defining the hexadecimal colors for Tree-Sitter nodes.
+2. `parsers/` A folder containing the compiled Tree-Sitter `.so` shared libraries for the languages you want to edit (e.g., `parsers/tree-sitter-c.so`).
+3. `queries/` Directory: A folder containing the Tree-Sitter query files (`highlights.scm`) for each language. These files map the structural code parsed by the `.so` files to the color tags defined in your `theme.config`. They must be placed in a subdirectory matching the language name (e.g., `queries/c/highlights.scm`).
+
+If these files are not present, Cypher will safely fall back to plain text editing.
 
 ## Installation & Compilation
 
