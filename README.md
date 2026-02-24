@@ -143,6 +143,7 @@ If these files are not present, Cypher will safely fall back to plain text editi
 
 - **Requirements:**
   - GCC compiler.
+  - Make utility
   - POSIX-compliant system (Linux, macOS, WSL).
 
 - **Compile:**
@@ -172,7 +173,7 @@ make clean
 - Clone this repo.
 
 ```bash
-git clone https://github.com/SidoJain/Cypher.git
+git clone --recursive https://github.com/SidoJain/Cypher.git
 cd Cypher
 ```
 
