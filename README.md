@@ -134,6 +134,11 @@ To utilize Cypher's semantic syntax highlighting, ensure the following files are
 
 If these files are not present, Cypher will safely fall back to plain text editing.
 
+### Current file formats that work with Tree-Sitter
+
+- C
+- Python
+
 ## Installation & Compilation
 
 - **Requirements:**

@@ -1208,7 +1208,7 @@ void editorUpdateSyntaxColors(size_t start, size_t end, uint32_t *colors, uint16
 char *editorRenderLine(const char *text, size_t len, int *rendered_len) {
     int tabs = 0;
     for (size_t i = 0; i < len; i++) if (text[i] == '\t') tabs++;
-    
+
     char *render = safeMalloc(len + tabs * (TAB_SIZE - 1) + 1);
     int rsize = 0;
     for (size_t i = 0; i < len; i++) {
@@ -1260,7 +1260,7 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     size_t line_start_byte = editorGetLogicalOffset(&E.buf, file_row, 0);
     int r_len;
     char *render = editorRenderLine(line_text, line_len, &r_len);
-    
+
     int visible_len = r_len - E.view.col_offset;
     if (visible_len < 0) visible_len = 0;
     if (visible_len > E.view.screen_cols) visible_len = E.view.screen_cols;
@@ -1922,7 +1922,7 @@ size_t editorGetLineLength(EditorBuffer *buf, int line_idx) {
         ptReadLogical(&buf->pt, end_offset - 1, 1, &last_char);
         if (last_char == '\r') len--;
     }
-    
+
     return len;
 }
 
@@ -2728,7 +2728,7 @@ void editorCenterViewOnMatch() {
         } else if (render_pos >= E.view.col_offset + E.view.screen_cols - 1 && render_pos > margin) {
             E.view.col_offset = render_pos - (E.view.screen_cols - margin);
         }
-        
+
         if (E.view.col_offset < 0) E.view.col_offset = 0;
     }
 }
@@ -2990,7 +2990,7 @@ char getMatchingBracket(char ch) {
 
 bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *match_x) {
     if (cursor_y >= E.buf.num_lines) return false;
-    
+
     size_t line_len;
     char *line_text = editorGetLine(&E.buf, cursor_y, &line_len);
     if (!line_text || (size_t)cursor_x >= line_len) {
@@ -3434,7 +3434,7 @@ void editorInitTreeSitter() {
 
     char query_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
     snprintf(query_path, sizeof(query_path), "%s/queries/%s/highlights.scm", exe_dir, lang_name);
-    
+
     char *query_string = editorReadFileIntoString(query_path);
     if (query_string) {
         uint32_t error_offset;
@@ -3623,7 +3623,7 @@ const char *editorGetLanguageName(const char *filename) {
     if (strcmp(ext, ".html") == 0) return "html";
     if (strcmp(ext, ".css") == 0) return "css";
     if (strcmp(ext, ".json") == 0) return "json";
-    
+
     return NULL;
 }
 
