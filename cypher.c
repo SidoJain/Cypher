@@ -1895,10 +1895,14 @@ char *editorGetLine(EditorBuffer *buf, int line_idx, size_t *line_len) {
     else
         end_offset = buf->line_offsets[line_idx + 1] - 1;
 
-    *line_len = end_offset - start_offset;
-    char *line_text = safeMalloc(*line_len + 1);
+    size_t raw_len = end_offset - start_offset;
+    char *line_text = safeMalloc(raw_len + 1);
 
-    ptReadLogical(&buf->pt, start_offset, *line_len, line_text);
+    ptReadLogical(&buf->pt, start_offset, raw_len, line_text);
+    if (raw_len > 0 && line_text[raw_len - 1] == '\r')
+        line_text[--raw_len] = '\0';
+
+    *line_len = raw_len;
     return line_text;
 }
 
@@ -1911,7 +1915,15 @@ size_t editorGetLineLength(EditorBuffer *buf, int line_idx) {
         end_offset = buf->pt.logical_size;
     else
         end_offset = buf->line_offsets[line_idx + 1] - 1;
-    return end_offset - start_offset;
+
+    size_t len = end_offset - start_offset;
+    if (len > 0) {
+        char last_char;
+        ptReadLogical(&buf->pt, end_offset - 1, 1, &last_char);
+        if (last_char == '\r') len--;
+    }
+    
+    return len;
 }
 
 size_t editorGetLogicalOffset(EditorBuffer *buf, int cursor_y, int cursor_x) {
