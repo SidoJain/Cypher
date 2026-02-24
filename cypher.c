@@ -20,9 +20,13 @@
 #include <dlfcn.h>
 #include <tree_sitter/api.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.0"
+#define CYPHER_VERSION      "1.4.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -398,6 +402,7 @@ void base64_encode(const char *, int, char *);
 int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
+void getEditorDirectory(char *, size_t);
 
 // memory
 void *safeMalloc(size_t);
@@ -509,7 +514,12 @@ void editorInit() {
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
     E.view.screen_rows -= UI_RESERVED_ROWS;
 
-    editorLoadThemeConfig("theme.config");
+    char exe_dir[LARGE_BUFFER_SIZE];
+    getEditorDirectory(exe_dir, sizeof(exe_dir));
+
+    char theme_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    snprintf(theme_path, sizeof(theme_path), "%s/theme.config", exe_dir);
+    editorLoadThemeConfig(theme_path);
 }
 
 void editorCleanup() {
@@ -3324,6 +3334,33 @@ char *editorReadFileIntoString(const char *filepath) {
     return buffer;
 }
 
+void getEditorDirectory(char *dir, size_t size) {
+    char path[LARGE_BUFFER_SIZE];
+    memset(path, 0, sizeof(path));
+
+#ifdef __APPLE__
+    uint32_t len = sizeof(path);
+    if (_NSGetExecutablePath(path, &len) == 0) {
+        char *real_path = realpath(path, NULL);
+        if (real_path) {
+            strncpy(path, real_path, sizeof(path));
+            free(real_path);
+        }
+    }
+#else
+    if (readlink("/proc/self/exe", path, sizeof(path) - 1) == -1)
+        strncpy(path, ".", sizeof(path));
+#endif
+
+    char *last_slash = strrchr(path, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        snprintf(dir, size, "%s", path);
+    } else {
+        snprintf(dir, size, ".");
+    }
+}
+
 void *safeMalloc(size_t size) {
     void *ptr = malloc(size);
     if (!ptr) die("malloc");
@@ -3379,8 +3416,12 @@ void editorInitTreeSitter() {
 
     ts_parser_set_language(E.ts.parser, lang);
     const char *lang_name = editorGetLanguageName(E.buf.filename);
-    char query_path[BUFFER_SIZE];
-    snprintf(query_path, sizeof(query_path), "queries/%s/highlights.scm", lang_name);
+
+    char exe_dir[LARGE_BUFFER_SIZE];
+    getEditorDirectory(exe_dir, sizeof(exe_dir));
+
+    char query_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    snprintf(query_path, sizeof(query_path), "%s/queries/%s/highlights.scm", exe_dir, lang_name);
     
     char *query_string = editorReadFileIntoString(query_path);
     if (query_string) {
@@ -3578,8 +3619,11 @@ TSLanguage *editorLoadLanguage(const char *filename) {
     const char *lang_name = editorGetLanguageName(filename);
     if (!lang_name) return NULL;
 
-    char lib_path[LARGE_BUFFER_SIZE];
-    snprintf(lib_path, sizeof(lib_path), "./parsers/tree-sitter-%s.so", lang_name);
+    char exe_dir[LARGE_BUFFER_SIZE];
+    getEditorDirectory(exe_dir, sizeof(exe_dir));
+
+    char lib_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    snprintf(lib_path, sizeof(lib_path), "%s/parsers/tree-sitter-%s.so", exe_dir, lang_name);
 
     E.ts.language_lib = dlopen(lib_path, RTLD_LAZY);
     if (!E.ts.language_lib) {
