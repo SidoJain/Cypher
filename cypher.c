@@ -57,6 +57,8 @@
 #define QUERY_CURSOR_POSITION   "\x1b[6n"
 #define SHOW_CURSOR             "\x1b[?25h"
 #define HIDE_CURSOR             "\x1b[?25l"
+#define CURSOR_STEADY_BLOCK     "\x1b[6 q"
+#define CURSOR_DEFAULT          "\x1b[0 q"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;2;60;60;60m"
 #define RESET_BG_COLOR          "\x1b[49m"
 #define REMOVE_GRAPHICS         "\x1b[m"
@@ -72,9 +74,9 @@
 #define DEFAULT_FG_COLOR_HEX    0xFFFFFFFF
 #define SELECTION_COLOR_HEX     0xD4D4D4
 #define PRIORITY_HIGH           0xFFFF
-#define MOUSE_BTN_MASK          3
 #define MASK_8BIT               0xFF
 #define MASK_6BIT               0x3F
+#define MOUSE_BTN_MASK          3
 
 /*** Tree Sitter Function Prototypes ***/
 TSLanguage *tree_sitter_c(void);
@@ -602,11 +604,13 @@ void enableRawMode() {
     write(STDOUT_FILENO, ENTER_ALTERNATE_SCREEN, sizeof(ENTER_ALTERNATE_SCREEN) - 1);
     write(STDOUT_FILENO, ENABLE_MOUSE, sizeof(ENABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_ON, sizeof(BRACKETED_PASTE_ON) - 1);
+    write(STDOUT_FILENO, CURSOR_STEADY_BLOCK, sizeof(CURSOR_STEADY_BLOCK) - 1);
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
 void disableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.sys.orig_termios) == -1) die("tcsetattr");
+    write(STDOUT_FILENO, CURSOR_DEFAULT, sizeof(CURSOR_DEFAULT) - 1);
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_OFF, sizeof(BRACKETED_PASTE_OFF) - 1);
     write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);

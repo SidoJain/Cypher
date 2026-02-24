@@ -1,6 +1,6 @@
 # Cypher - Terminal Text Editor
 
-Cypher is a lightweight terminal-based text editor written in C, featuring native Tree-sitter semantic syntax highlighting.
+Cypher is a lightweight terminal-based text editor written in C, featuring native `Tree-Sitter` semantic syntax highlighting.
 It runs in the terminal in **raw mode**.  
 This README file has been completely written using Cypher.  
 
