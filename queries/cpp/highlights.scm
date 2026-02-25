@@ -146,4 +146,30 @@
 (template_method
   name: (field_identifier) @function.method)
 
+; Force ambiguous local function declarations to be variables
+(compound_statement
+  (declaration
+    declarator: (function_declarator
+      declarator: (identifier) @variable)))
+
+(compound_statement
+  (declaration
+    declarator: (function_declarator
+      parameters: (parameter_list
+        (parameter_declaration
+          type: (type_identifier) @variable)))))
+
+((template_function
+  name: (identifier) @type)
+ (#match? @type "^(vector|string|map|set|list|array|deque|stack|queue|priority_queue|pair|tuple|unique_ptr|shared_ptr|weak_ptr)$"))
+
+((call_expression
+  function: (identifier) @type)
+ (#match? @type "^(vector|string|map|set|list|array|deque|stack|queue|priority_queue|pair|tuple|unique_ptr|shared_ptr|weak_ptr)$"))
+
+((call_expression
+  function: (qualified_identifier
+    name: (identifier) @type))
+ (#match? @type "^(vector|string|map|set|list|array|deque|stack|queue|priority_queue|pair|tuple|unique_ptr|shared_ptr|weak_ptr)$"))
+
 (comment) @comment
