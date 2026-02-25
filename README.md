@@ -137,6 +137,7 @@ If these files are not present, Cypher will safely fall back to plain text editi
 ### Current file formats that work with Tree-Sitter
 
 - C
+- C++
 - Python
 
 ## Installation & Compilation

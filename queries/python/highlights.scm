@@ -1,5 +1,8 @@
 (identifier) @variable
 
+((identifier) @constant
+ (#match? @constant "^[A-Z][A-Z0-9_]*$"))
+
 (import_statement name: (dotted_name (identifier) @module))
 (import_from_statement module_name: (dotted_name (identifier) @module))
 (import_from_statement name: (dotted_name (identifier) @variable))

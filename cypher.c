@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <time.h>
+#include <regex.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <dlfcn.h>
@@ -300,6 +301,8 @@ void editorProcessKeypress();
 char *editorPrompt(char *, void (*)(const char *, int), char *);
 
 // output rendering
+bool editorEvaluateMatchPredicates(TSQueryMatch *);
+void editorApplyMatchColors(TSQueryMatch *, size_t, size_t, uint32_t *, uint16_t *);
 void editorUpdateSyntaxColors(size_t, size_t, uint32_t *, uint16_t *);
 char *editorRenderLine(const char *, size_t, int *);
 void editorGetNormalizedSelection(int *, int *, int *, int *);
@@ -451,7 +454,7 @@ int main(int argc, char *argv[]) {
     }
 
     editorInitTreeSitter();
-    editorSetStatusMsg("HELP: Ctrl-H");
+    if (E.sys.status_msg[0] == '\0') editorSetStatusMsg("HELP: Ctrl-H");
     while (1) {
         if (E.view.resized) {
             E.view.resized = 0;
@@ -1176,6 +1179,83 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
     }
 }
 
+bool editorEvaluateMatchPredicates(TSQueryMatch *match) {
+    uint32_t step_count = 0;
+    const TSQueryPredicateStep *steps = ts_query_predicates_for_pattern(E.ts.query, match->pattern_index, &step_count);
+
+    if (step_count == 0) return true;
+
+    for (uint32_t i = 0; i < step_count; ) {
+        if (steps[i].type == TSQueryPredicateStepTypeString) {
+            uint32_t len;
+            const char *pred_name = ts_query_string_value_for_id(E.ts.query, steps[i].value_id, &len);
+            if (strncmp(pred_name, "match?", len) == 0 && i + 2 < step_count) {
+                if (steps[i+1].type == TSQueryPredicateStepTypeCapture &&
+                    steps[i+2].type == TSQueryPredicateStepTypeString) {
+
+                    uint32_t capture_id = steps[i+1].value_id;
+                    uint32_t regex_len;
+                    const char *regex_str = ts_query_string_value_for_id(E.ts.query, steps[i+2].value_id, &regex_len);
+
+                    TSNode target_node;
+                    bool found_node = false;
+                    for (uint16_t c = 0; c < match->capture_count; c++) {
+                        if (match->captures[c].index == capture_id) {
+                            target_node = match->captures[c].node;
+                            found_node = true;
+                            break;
+                        }
+                    }
+
+                    if (found_node) {
+                        uint32_t n_start = ts_node_start_byte(target_node);
+                        uint32_t n_end = ts_node_end_byte(target_node);
+                        uint32_t n_len = n_end - n_start;
+
+                        char *node_text = safeMalloc(n_len + 1);
+                        ptReadLogical(&E.buf.pt, n_start, n_len, node_text);
+
+                        regex_t regex;
+                        if (regcomp(&regex, regex_str, REG_EXTENDED | REG_NOSUB) == 0) {
+                            if (regexec(&regex, node_text, 0, NULL, 0) == REG_NOMATCH) {
+                                free(node_text);
+                                regfree(&regex);
+                                return false;
+                            }
+                            regfree(&regex);
+                        }
+                        free(node_text);
+                    }
+                }
+            }
+        }
+        while (i < step_count && steps[i].type != TSQueryPredicateStepTypeDone) i++;
+        i++; 
+    }
+    return true;
+}
+
+void editorApplyMatchColors(TSQueryMatch *match, size_t start, size_t end, uint32_t *colors, uint16_t *priorities) {
+    for (uint16_t i = 0; i < match->capture_count; i++) {
+        TSQueryCapture capture = match->captures[i];
+        uint32_t n_start = ts_node_start_byte(capture.node);
+        uint32_t n_end = ts_node_end_byte(capture.node);
+
+        if (n_start < start) n_start = start;
+        if (n_end > end) n_end = end;
+        if (n_start >= n_end) continue;
+
+        uint32_t color = (capture.index < E.ts.theme_color_count) ? E.ts.theme_colors[capture.index] : E.ts.default_fg;
+        uint16_t priority = match->pattern_index;
+        for (uint32_t b = n_start; b < n_end; b++) {
+            if (priority >= priorities[b - start]) {
+                colors[b - start] = color;
+                priorities[b - start] = priority;
+            }
+        }
+    }
+}
+
 void editorUpdateSyntaxColors(size_t start, size_t end, uint32_t *colors, uint16_t *priorities) {
     if (!E.ts.tree || !E.ts.query || !E.ts.query_cursor) return;
 
@@ -1183,26 +1263,9 @@ void editorUpdateSyntaxColors(size_t start, size_t end, uint32_t *colors, uint16
     ts_query_cursor_exec(E.ts.query_cursor, E.ts.query, ts_tree_root_node(E.ts.tree));
 
     TSQueryMatch match;
-    while (ts_query_cursor_next_match(E.ts.query_cursor, &match)) {
-        for (uint16_t i = 0; i < match.capture_count; i++) {
-            TSQueryCapture capture = match.captures[i];
-            uint32_t n_start = ts_node_start_byte(capture.node);
-            uint32_t n_end = ts_node_end_byte(capture.node);
-
-            if (n_start < start) n_start = start;
-            if (n_end > end) n_end = end;
-            if (n_start >= n_end) continue;
-
-            uint32_t color = (capture.index < E.ts.theme_color_count) ? E.ts.theme_colors[capture.index] : E.ts.default_fg;
-            uint16_t priority = match.pattern_index;
-            for (uint32_t b = n_start; b < n_end; b++) {
-                if (priority >= priorities[b - start]) {
-                    colors[b - start] = color;
-                    priorities[b - start] = priority;
-                }
-            }
-        }
-    }
+    while (ts_query_cursor_next_match(E.ts.query_cursor, &match))
+        if (editorEvaluateMatchPredicates(&match))
+            editorApplyMatchColors(&match, start, end, colors, priorities);
 }
 
 char *editorRenderLine(const char *text, size_t len, int *rendered_len) {
@@ -3442,7 +3505,11 @@ void editorInitTreeSitter() {
         E.ts.query = ts_query_new(lang, query_string, strlen(query_string), &error_offset, &error_type);
         free(query_string);
         editorLoadTheme(E.ts.query);
-        if (!E.ts.query) editorSetStatusMsg("Warning: Failed to compile syntax query!");
+        if (!E.ts.query) {
+            char msg[STATUS_LENGTH];
+            snprintf(msg, sizeof(msg), "TS Query Error at offset %u", error_offset);
+            editorSetStatusMsg(msg);
+        }
     } else {
         E.ts.query = NULL;
         editorLoadTheme(NULL);
