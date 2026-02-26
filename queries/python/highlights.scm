@@ -5,8 +5,9 @@
 
 (import_statement name: (dotted_name (identifier) @module))
 (import_from_statement module_name: (dotted_name (identifier) @module))
-(import_from_statement name: (dotted_name (identifier) @variable))
+(import_from_statement name: (dotted_name (identifier) @module))
 (aliased_import alias: (identifier) @module)
+(aliased_import name: (dotted_name (identifier) @module))
 
 (none) @constant.builtin
 (true) @constant.builtin
