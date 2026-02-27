@@ -7,7 +7,7 @@ PARSERS = parsers/tree-sitter-c.so parsers/tree-sitter-cpp.so parsers/tree-sitte
 FILE ?=
 
 INCLUDES = -I lib/tree-sitter/lib/include
-CFLAGS = -Wall -Wextra -pedantic -std=c99 -g
+CFLAGS = -Wall -Wextra -pedantic -std=c99 -O2
 
 all: $(EXE) parsers
 

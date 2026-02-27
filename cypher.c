@@ -588,7 +588,7 @@ void editorCleanup() {
 void editorQuit() {
     if (E.buf.dirty && E.buf.quit_times > 0) {
         char msg[STATUS_LENGTH];
-        snprintf(msg, sizeof(msg), "WARNING!!! File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", E.buf.quit_times, E.buf.quit_times == 1 ? "" : "s");
+        snprintf(msg, sizeof(msg), "File has unsaved changes. Press Ctrl-Q %d more time%s to quit.", E.buf.quit_times, E.buf.quit_times == 1 ? "" : "s");
         editorSetStatusMsg(msg);
         E.buf.quit_times--;
         return;
