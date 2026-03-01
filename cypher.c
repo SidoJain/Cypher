@@ -27,7 +27,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.1"
+#define CYPHER_VERSION      "1.4.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -971,9 +971,27 @@ void editorProcessKeypress() {
             break;
 
         case HOME_KEY:
-            E.cursor.x = 0;
-            E.cursor.preferred_x = E.cursor.x;
             E.sel.active = false;
+            if (E.cursor.y < E.buf.num_lines) {
+                size_t line_len;
+                char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+                if (line_text) {
+                    int first_char_x = 0;
+                    while ((size_t)first_char_x < line_len && (line_text[first_char_x] == ' ' || line_text[first_char_x] == '\t'))
+                        first_char_x++;
+
+                    if (E.cursor.x == first_char_x)
+                        E.cursor.x = 0;
+                    else
+                        E.cursor.x = first_char_x;
+                    free(line_text);
+                } else {
+                    E.cursor.x = 0;
+                }
+            } else {
+                E.cursor.x = 0;
+            }
+            E.cursor.preferred_x = E.cursor.x;
             updateMatchBracket();
             break;
         case END_KEY:
