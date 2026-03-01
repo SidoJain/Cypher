@@ -27,7 +27,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.2"
+#define CYPHER_VERSION      "1.4.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -399,6 +399,7 @@ void updateMatchBracket();
 
 // mouse operations
 void editorMouseLeftClick();
+void editorMouseDoubleClick();
 void editorMouseDragClick();
 void editorMouseLeftRelease();
 
@@ -3316,12 +3317,58 @@ void updateMatchBracket() {
 
 void editorMouseLeftClick() {
     clampCursorPosition();
+
+    static long last_click_time = 0;
+    static int last_click_x = -1;
+    static int last_click_y = -1;
+    long now = currentMillis();
+    if (now - last_click_time < 400 && E.cursor.x == last_click_x && E.cursor.y == last_click_y) {
+        editorMouseDoubleClick();
+        last_click_time = 0;
+        last_click_x = -1;
+        last_click_y = -1;
+        return;
+    }
+
     E.sel.active = true;
     E.sel.sx = E.cursor.x;
     E.sel.sy = E.cursor.y;
     E.sel.ex = E.cursor.x;
     E.sel.ey = E.cursor.y;
     E.cursor.preferred_x = E.cursor.x;
+
+    last_click_time = now;
+    last_click_x = E.cursor.x;
+    last_click_y = E.cursor.y;
+}
+
+void editorMouseDoubleClick() {
+    if (E.cursor.y >= E.buf.num_lines) return;
+
+    size_t line_len;
+    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+    if (line_text && line_len > 0) {
+        int cx = E.cursor.x;
+        if ((size_t)cx >= line_len) cx = line_len - 1;
+
+        if (cx >= 0 && isWordChar(line_text[cx])) {
+            int start_x = cx;
+            int end_x = cx;
+            while (start_x > 0 && isWordChar(line_text[start_x - 1]))
+                start_x--;
+            while ((size_t)end_x < line_len && isWordChar(line_text[end_x]))
+                end_x++;
+
+            E.sel.active = true;
+            E.sel.sy = E.cursor.y;
+            E.sel.sx = start_x;
+            E.sel.ey = E.cursor.y;
+            E.sel.ex = end_x;
+            E.cursor.x = end_x;
+            E.cursor.preferred_x = E.cursor.x;
+        }
+        free(line_text);
+    }
 }
 
 void editorMouseDragClick() {
