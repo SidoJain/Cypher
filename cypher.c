@@ -2182,17 +2182,42 @@ void editorDeleteChar(int is_backspace) {
         char prev_char = (offset > 0) ? ptCharAt(&E.buf.pt, offset - 1) : '\0';
         char next_char = ptCharAt(&E.buf.pt, offset);
         char closing_char = getClosingChar(prev_char);
-        if (closing_char && next_char == closing_char)
-            executeDelete(offset - 1, 2);
-        else
-            executeDelete(offset - 1, 1);
 
-        if (E.cursor.x == 0) {
-            E.cursor.y--;
-            E.cursor.x = prev_line_len;
+        bool is_soft_tab = false;
+        int chars_to_delete = 1;
+        if (E.cursor.x > 0 && prev_char == ' ') {
+            size_t line_len;
+            char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+            bool only_spaces = true;
+            for (int i = 0; i < E.cursor.x; i++) {
+                if (line_text[i] != ' ') {
+                    only_spaces = false;
+                    break;
+                }
+            }
+
+            if (only_spaces) {
+                is_soft_tab = true;
+                chars_to_delete = (E.cursor.x % TAB_SIZE == 0) ? TAB_SIZE : (E.cursor.x % TAB_SIZE);
+            }
+            if (line_text) free(line_text);
         }
-        else
+
+        if (closing_char && next_char == closing_char) {
+            executeDelete(offset - 1, 2);
             E.cursor.x--;
+        } else if (is_soft_tab) {
+            executeDelete(offset - chars_to_delete, chars_to_delete);
+            E.cursor.x -= chars_to_delete;
+        } else {
+            executeDelete(offset - 1, 1);
+            if (E.cursor.x == 0) {
+                E.cursor.y--;
+                E.cursor.x = prev_line_len;
+            } else {
+                E.cursor.x--;
+            }
+        }
     }
     else if (offset < E.buf.pt.logical_size)
         executeDelete(offset, 1);
