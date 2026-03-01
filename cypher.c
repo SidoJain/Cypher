@@ -137,6 +137,12 @@ typedef enum {
     CMD_DELETE
 } CommandType;
 
+typedef enum {
+    INDENT_NONE,
+    INDENT_EXTRA,
+    INDENT_SPLIT
+} IndentStrategy;
+
 typedef struct {
     BufferSource source;
     size_t start;
@@ -346,6 +352,8 @@ size_t editorGetLogicalOffset(EditorBuffer *, int, int);
 void editorOffsetToRowCol(EditorBuffer *, size_t, int *, int *);
 
 // line editing
+int get_line_indentation(const char *, size_t);
+IndentStrategy get_indent_strategy(const char *, size_t);
 void editorInsertChar(int);
 void editorDeleteChar(int);
 void editorInsertNewline();
@@ -2145,6 +2153,25 @@ void editorOffsetToRowCol(EditorBuffer *buf, size_t offset, int *row, int *col) 
     *col = offset - buf->line_offsets[found_row];
 }
 
+int get_line_indentation(const char *line_text, size_t line_len) {
+    if (!line_text || E.sel.is_pasting) return 0;
+
+    int indent = 0;
+    while ((size_t)indent < line_len && (line_text[indent] == ' ' || line_text[indent] == '\t'))
+        indent++;
+    return (indent > E.cursor.x) ? E.cursor.x : indent;
+}
+
+IndentStrategy get_indent_strategy(const char *line_text, size_t line_len) {
+    if (!line_text || E.cursor.x == 0 || E.sel.is_pasting) return INDENT_NONE;
+
+    char prev = line_text[E.cursor.x - 1];
+    char curr = ((size_t)E.cursor.x < line_len) ? line_text[E.cursor.x] : '\0';
+    if ((prev == '{' && curr == '}') || (prev == '[' && curr == ']') || (prev == '(' && curr == ')')) return INDENT_SPLIT;
+    if (prev == ':' || prev == '{' || prev == '[' || prev == '(') return INDENT_EXTRA;
+    return INDENT_NONE;
+}
+
 void editorInsertChar(int ch) {
     if (E.sel.active) {
         editorDeleteSelectedText();
@@ -2231,81 +2258,56 @@ void editorInsertNewline() {
     size_t line_len;
     char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
 
-    int indent_len = 0;
-    if (line_text) {
-        while ((size_t)indent_len < line_len && (line_text[indent_len] == ' ' || line_text[indent_len] == '\t')) indent_len++;
-        if (indent_len > E.cursor.x) indent_len = E.cursor.x;
-        if (E.sel.is_pasting) indent_len = 0;
-    }
+    int base_indent = get_line_indentation(line_text, line_len);
+    IndentStrategy strategy = get_indent_strategy(line_text, line_len);
 
-    char prev_char = (E.cursor.x > 0 && line_text) ? line_text[E.cursor.x - 1] : '\0';
-    char curr_char = ((size_t)E.cursor.x < line_len && line_text) ? line_text[E.cursor.x] : '\0';
-    bool is_between_brackets = ((prev_char == '{' && curr_char == '}') || (prev_char == '[' && curr_char == ']') || (prev_char == '(' && curr_char == ')'));
-    bool just_opened_bracket = (prev_char == '{' || prev_char == '[' || prev_char == '(');
-
-    if (E.sel.is_pasting) {
-        is_between_brackets = false;
-        just_opened_bracket = false;
-        indent_len = 0;
-    }
-
-    if (is_between_brackets) {
-        int total_len = (indent_len + TAB_SIZE + 1) + (indent_len + 1);
-        char *insert_str = safeMalloc(total_len + 1);
+    if (strategy == INDENT_SPLIT) {
+        int total_len = (base_indent + TAB_SIZE + 1) + (base_indent + 1);
+        char *insert_str = safeCalloc(1, total_len + 1);
 
         int pos = 0;
         insert_str[pos++] = '\n';
-        if (indent_len > 0) {
-            memcpy(insert_str + pos, line_text, indent_len);
-            pos += indent_len;
+        if (base_indent > 0) {
+            memcpy(insert_str + pos, line_text, base_indent);
+            pos += base_indent;
         }
+
         memset(insert_str + pos, ' ', TAB_SIZE);
         pos += TAB_SIZE;
-
         insert_str[pos++] = '\n';
-        if (indent_len > 0) {
-            memcpy(insert_str + pos, line_text, indent_len);
-            pos += indent_len;
+        if (base_indent > 0) {
+            memcpy(insert_str + pos, line_text, base_indent);
+            pos += base_indent;
         }
-        insert_str[pos] = '\0';
 
         executeInsert(offset, insert_str, total_len);
-        free(insert_str);
-
         E.cursor.y++;
-        E.cursor.x = indent_len + TAB_SIZE;
-    } else if (just_opened_bracket) {
-        int total_len = indent_len + TAB_SIZE + 1;
-        char *insert_str = safeMalloc(total_len + 1);
+        E.cursor.x = base_indent + TAB_SIZE;
+        free(insert_str);
+    } else if (strategy == INDENT_EXTRA) {
+        int total_len = base_indent + TAB_SIZE + 1;
+        char *insert_str = safeCalloc(1, total_len + 1);
 
-        int pos = 0;
-        insert_str[pos++] = '\n';
-        if (indent_len > 0) {
-            memcpy(insert_str + pos, line_text, indent_len);
-            pos += indent_len;
-        }
-        memset(insert_str + pos, ' ', TAB_SIZE);
-        pos += TAB_SIZE;
-        insert_str[pos] = '\0';
+        insert_str[0] = '\n';
+        if (base_indent > 0) memcpy(insert_str + 1, line_text, base_indent);
+        memset(insert_str + 1 + base_indent, ' ', TAB_SIZE);
 
         executeInsert(offset, insert_str, total_len);
-        free(insert_str);
-
         E.cursor.y++;
-        E.cursor.x = indent_len + TAB_SIZE;
+        E.cursor.x = base_indent + TAB_SIZE;
+        free(insert_str);
     } else {
-        int total_len = indent_len + 1;
+        int total_len = base_indent + 1;
         char *insert_str = safeMalloc(total_len + 1);
 
         insert_str[0] = '\n';
-        if (indent_len > 0) memcpy(insert_str + 1, line_text, indent_len);
+        if (base_indent > 0) memcpy(insert_str + 1, line_text, base_indent);
         insert_str[total_len] = '\0';
 
         executeInsert(offset, insert_str, total_len);
-        free(insert_str);
-
         E.cursor.y++;
-        E.cursor.x = indent_len;
+        E.cursor.x = base_indent;
+        free(insert_str);
     }
 
     E.cursor.preferred_x = E.cursor.x;
