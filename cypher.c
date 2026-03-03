@@ -27,7 +27,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.3"
+#define CYPHER_VERSION      "1.4.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -419,6 +419,7 @@ int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
 void getEditorDirectory(char *, size_t);
+char *expandTabs(const char *, size_t, size_t *);
 
 // memory
 void *safeMalloc(size_t);
@@ -966,9 +967,20 @@ void editorProcessKeypress() {
             break;
 
         case '\t':              // tab
-            if (E.sel.is_pasting) E.sel.paste_len++;
-            editorInsertChar('\t');
-            if (!E.sel.is_pasting) updateMatchBracket();
+            {
+                int spaces_to_insert = TAB_SIZE - (E.cursor.x % TAB_SIZE);
+                if (E.sel.is_pasting) {
+                    for (int i = 0; i < spaces_to_insert; i++)
+                        editorInsertChar(' ');
+                    E.sel.paste_len += spaces_to_insert;
+                } else {
+                    editorBeginMacro();
+                    for (int i = 0; i < spaces_to_insert; i++)
+                        editorInsertChar(' ');
+                    editorEndMacro();
+                    updateMatchBracket();
+                }
+            }
             break;
 
         case HOME_KEY:
@@ -2234,19 +2246,24 @@ void editorDeleteChar(int is_backspace) {
         if (E.cursor.x > 0 && prev_char == ' ') {
             size_t line_len;
             char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-            bool only_spaces = true;
-            for (int i = 0; i < E.cursor.x; i++) {
-                if (line_text[i] != ' ') {
-                    only_spaces = false;
-                    break;
+            if (line_text) {
+                int space_count = 0;
+                for (int i = E.cursor.x - 1; i >= 0; i--) {
+                    if (line_text[i] == ' ') space_count++;
+                    else break;
                 }
-            }
 
-            if (only_spaces) {
-                is_soft_tab = true;
-                chars_to_delete = (E.cursor.x % TAB_SIZE == 0) ? TAB_SIZE : (E.cursor.x % TAB_SIZE);
+                if (space_count > 0) {
+                    is_soft_tab = true;
+                    int dist_to_tab_stop = (E.cursor.x % TAB_SIZE == 0) ? TAB_SIZE : (E.cursor.x % TAB_SIZE);
+                    if (space_count >= dist_to_tab_stop) {
+                        chars_to_delete = dist_to_tab_stop;
+                    } else {
+                        chars_to_delete = space_count;
+                    }
+                }
+                free(line_text);
             }
-            if (line_text) free(line_text);
         }
 
         if (closing_char && next_char == closing_char) {
@@ -3407,7 +3424,12 @@ void editorOpen(const char *filename) {
         char *buffer = safeMalloc(file_size + 1);
         size_t read_size = fread(buffer, 1, file_size, fp);
         buffer[read_size] = '\0';
-        ptInit(&E.buf.pt, buffer, read_size);
+
+        size_t expanded_len;
+        char *expanded_buffer = expandTabs(buffer, read_size, &expanded_len);
+
+        ptInit(&E.buf.pt, expanded_buffer, expanded_len);
+        free(expanded_buffer);
         free(buffer);
     }
     else
@@ -3695,6 +3717,45 @@ void getEditorDirectory(char *dir, size_t size) {
     } else {
         snprintf(dir, size, ".");
     }
+}
+
+char *expandTabs(const char *input, size_t input_len, size_t *out_len) {
+    size_t required_size = 0;
+    int col = 0;
+    for (size_t i = 0; i < input_len; i++) {
+        if (input[i] == '\t') {
+            int spaces = TAB_SIZE - (col % TAB_SIZE);
+            required_size += spaces;
+            col += spaces;
+        } else if (input[i] == '\n' || input[i] == '\r') {
+            required_size++;
+            col = 0;
+        } else {
+            required_size++;
+            col++;
+        }
+    }
+
+    char *expanded = safeMalloc(required_size + 1);
+    size_t j = 0;
+    col = 0;
+    for (size_t i = 0; i < input_len; i++) {
+        if (input[i] == '\t') {
+            int spaces = TAB_SIZE - (col % TAB_SIZE);
+            for (int s = 0; s < spaces; s++) expanded[j++] = ' ';
+            col += spaces;
+        } else if (input[i] == '\n' || input[i] == '\r') {
+            expanded[j++] = input[i];
+            col = 0;
+        } else {
+            expanded[j++] = input[i];
+            col++;
+        }
+    }
+    expanded[j] = '\0';
+    if (out_len) *out_len = j;
+
+    return expanded;
 }
 
 void *safeMalloc(size_t size) {
