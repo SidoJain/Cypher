@@ -1088,9 +1088,30 @@ void editorProcessKeypress() {
                 E.sel.sx = E.cursor.x;
                 E.sel.sy = E.cursor.y;
             }
-            E.cursor.x = 0;
+
+            if (E.cursor.y < E.buf.num_lines) {
+                size_t line_len;
+                char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+                if (line_text) {
+                    int first_char_x = 0;
+                    while ((size_t)first_char_x < line_len && (line_text[first_char_x] == ' ' || line_text[first_char_x] == '\t'))
+                        first_char_x++;
+
+                    if (E.cursor.x == first_char_x)
+                        E.cursor.x = 0;
+                    else
+                        E.cursor.x = first_char_x;
+                    free(line_text);
+                } else {
+                    E.cursor.x = 0;
+                }
+            } else {
+                E.cursor.x = 0;
+            }
+
             E.sel.ex = E.cursor.x;
             E.sel.ey = E.cursor.y;
+            E.cursor.preferred_x = E.cursor.x;
             updateMatchBracket();
             break;
         case SHIFT_END:
