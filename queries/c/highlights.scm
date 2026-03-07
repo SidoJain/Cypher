@@ -7,7 +7,6 @@
 "enum" @keyword
 "extern" @keyword
 "inline" @keyword
-"sizeof" @keyword
 "static" @keyword
 "struct" @keyword
 "typedef" @keyword
@@ -79,6 +78,7 @@
 (primitive_type) @type.builtin
 (sized_type_specifier) @type.builtin
 
+"sizeof" @function
 (call_expression
   function: (identifier) @function)
 (call_expression

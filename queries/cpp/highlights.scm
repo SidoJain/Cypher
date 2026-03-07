@@ -10,7 +10,6 @@
 "enum" @keyword
 "extern" @keyword
 "inline" @keyword
-"sizeof" @keyword
 "static" @keyword
 "struct" @keyword
 "typedef" @keyword
@@ -116,6 +115,7 @@
 (namespace_identifier) @constructor
 (module_name (identifier) @constructor)
 
+"sizeof" @function
 (function_declarator
   declarator: (identifier) @function)
 
