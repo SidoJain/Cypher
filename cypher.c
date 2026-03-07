@@ -27,7 +27,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.4"
+#define CYPHER_VERSION      "1.4.5"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -142,6 +142,16 @@ typedef enum {
     INDENT_EXTRA,
     INDENT_SPLIT
 } IndentStrategy;
+
+typedef enum {
+    DELETE_FORWARD,
+    DELETE_BACKWARD
+} DeleteDirection;
+
+typedef enum {
+    SCROLL_PAGE,
+    SCROLL_LINE
+} ScrollUnit;
 
 typedef struct {
     BufferSource source;
@@ -332,8 +342,8 @@ void editorScroll();
 void editorMoveCursor(int);
 void editorMoveWordLeft();
 void editorMoveWordRight();
-void editorScrollPageUp(int);
-void editorScrollPageDown(int);
+void editorScrollPageUp(ScrollUnit);
+void editorScrollPageDown(ScrollUnit);
 void editorJump();
 void editorJumpCallback(const char *, int);
 
@@ -355,12 +365,16 @@ void editorOffsetToRowCol(EditorBuffer *, size_t, int *, int *);
 int get_line_indentation(const char *, size_t);
 IndentStrategy get_indent_strategy(const char *, size_t);
 void editorInsertChar(int);
-void editorDeleteChar(int);
+size_t editorGetDeleteSize(size_t);
+void editorDeleteChar(DeleteDirection);
 void editorInsertNewline();
 void editorMoveRowUp();
 void editorMoveRowDown();
 void editorCopyRowUp();
 void editorCopyRowDown();
+void editorInsertTab();
+void editorMoveToLineStart();
+void editorMoveToLineEnd();
 
 // clipboard
 void editorSelectText(int);
@@ -847,7 +861,9 @@ void editorProcessStandardKey(int ch) {
 
                 E.sel.is_pasting = was_pasting;
                 editorEndMacro();
-                if (!was_pasting) editorParseTreeSitter();
+
+                if (!was_pasting)
+                    editorParseTreeSitter();
                 free(selected);
                 return;
             }
@@ -967,70 +983,35 @@ void editorProcessKeypress() {
             break;
 
         case '\t':              // tab
-            {
-                int spaces_to_insert = TAB_SIZE - (E.cursor.x % TAB_SIZE);
-                if (E.sel.is_pasting) {
-                    for (int i = 0; i < spaces_to_insert; i++)
-                        editorInsertChar(' ');
-                    E.sel.paste_len += spaces_to_insert;
-                } else {
-                    editorBeginMacro();
-                    for (int i = 0; i < spaces_to_insert; i++)
-                        editorInsertChar(' ');
-                    editorEndMacro();
-                    updateMatchBracket();
-                }
-            }
+            editorInsertTab();
             break;
 
         case HOME_KEY:
             E.sel.active = false;
-            if (E.cursor.y < E.buf.num_lines) {
-                size_t line_len;
-                char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-                if (line_text) {
-                    int first_char_x = 0;
-                    while ((size_t)first_char_x < line_len && (line_text[first_char_x] == ' ' || line_text[first_char_x] == '\t'))
-                        first_char_x++;
-
-                    if (E.cursor.x == first_char_x)
-                        E.cursor.x = 0;
-                    else
-                        E.cursor.x = first_char_x;
-                    free(line_text);
-                } else {
-                    E.cursor.x = 0;
-                }
-            } else {
-                E.cursor.x = 0;
-            }
-            E.cursor.preferred_x = E.cursor.x;
+            editorMoveToLineStart();
             updateMatchBracket();
             break;
         case END_KEY:
             E.sel.active = false;
-            if (E.cursor.y < E.buf.num_lines) {
-                E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
-                E.cursor.preferred_x = E.cursor.x;
-            }
+            editorMoveToLineEnd();
             updateMatchBracket();
             break;
 
         case DEL_KEY:
-            editorDeleteChar(0);
+            editorDeleteChar(DELETE_FORWARD);
             updateMatchBracket();
             break;
         case BACKSPACE:
-            editorDeleteChar(1);
+            editorDeleteChar(DELETE_BACKWARD);
             updateMatchBracket();
             break;
 
         case PAGE_UP:
-            editorScrollPageUp(E.view.screen_rows);
+            editorScrollPageUp(SCROLL_PAGE);
             updateMatchBracket();
             break;
         case PAGE_DOWN:
-            editorScrollPageDown(E.view.screen_rows);
+            editorScrollPageDown(SCROLL_PAGE);
             updateMatchBracket();
             break;
 
@@ -1043,11 +1024,11 @@ void editorProcessKeypress() {
             updateMatchBracket();
             break;
         case CTRL_ARROW_UP:
-            editorScrollPageUp(1);
+            editorScrollPageUp(SCROLL_LINE);
             updateMatchBracket();
             break;
         case CTRL_ARROW_DOWN:
-            editorScrollPageDown(1);
+            editorScrollPageDown(SCROLL_LINE);
             updateMatchBracket();
             break;
 
@@ -1088,30 +1069,9 @@ void editorProcessKeypress() {
                 E.sel.sx = E.cursor.x;
                 E.sel.sy = E.cursor.y;
             }
-
-            if (E.cursor.y < E.buf.num_lines) {
-                size_t line_len;
-                char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-                if (line_text) {
-                    int first_char_x = 0;
-                    while ((size_t)first_char_x < line_len && (line_text[first_char_x] == ' ' || line_text[first_char_x] == '\t'))
-                        first_char_x++;
-
-                    if (E.cursor.x == first_char_x)
-                        E.cursor.x = 0;
-                    else
-                        E.cursor.x = first_char_x;
-                    free(line_text);
-                } else {
-                    E.cursor.x = 0;
-                }
-            } else {
-                E.cursor.x = 0;
-            }
-
+            editorMoveToLineStart();
             E.sel.ex = E.cursor.x;
             E.sel.ey = E.cursor.y;
-            E.cursor.preferred_x = E.cursor.x;
             updateMatchBracket();
             break;
         case SHIFT_END:
@@ -1120,8 +1080,7 @@ void editorProcessKeypress() {
                 E.sel.sx = E.cursor.x;
                 E.sel.sy = E.cursor.y;
             }
-            if (E.cursor.y < E.buf.num_lines)
-                E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
+            editorMoveToLineEnd();
             E.sel.ex = E.cursor.x;
             E.sel.ey = E.cursor.y;
             updateMatchBracket();
@@ -1156,11 +1115,11 @@ void editorProcessKeypress() {
             break;
 
         case MOUSE_SCROLL_UP:
-            editorScrollPageUp(1);
+            editorScrollPageUp(SCROLL_LINE);
             updateMatchBracket();
             break;
         case MOUSE_SCROLL_DOWN:
-            editorScrollPageDown(1);
+            editorScrollPageDown(SCROLL_LINE);
             updateMatchBracket();
             break;
 
@@ -1794,9 +1753,10 @@ void editorMoveWordRight() {
     free(line_text);
 }
 
-void editorScrollPageUp(int scroll_amount) {
+void editorScrollPageUp(ScrollUnit unit) {
     if (E.buf.num_lines == 0) return;
 
+    int scroll_amount = (unit == SCROLL_PAGE) ? E.view.screen_rows : 1;
     if (E.view.row_offset > 0) {
         if (scroll_amount > E.view.row_offset) scroll_amount = E.view.row_offset;
         E.view.row_offset -= scroll_amount;
@@ -1815,9 +1775,10 @@ void editorScrollPageUp(int scroll_amount) {
     }
 }
 
-void editorScrollPageDown(int scroll_amount) {
+void editorScrollPageDown(ScrollUnit unit) {
     if (E.buf.num_lines == 0) return;
 
+    int scroll_amount = (unit == SCROLL_PAGE) ? E.view.screen_rows : 1;
     if (E.view.row_offset < E.buf.num_lines - E.view.screen_rows) {
         E.view.row_offset += scroll_amount;
         E.cursor.y += scroll_amount;
@@ -2243,68 +2204,57 @@ void editorInsertChar(int ch) {
     E.buf.dirty = true;
 }
 
-void editorDeleteChar(int is_backspace) {
+size_t editorGetDeleteSize(size_t offset) {
+    if (offset == 0) return 0;
+
+    char prev_char = ptCharAt(&E.buf.pt, offset - 1);
+    char next_char = (offset < E.buf.pt.logical_size) ? ptCharAt(&E.buf.pt, offset) : '\0';
+
+    char expected_closing = getClosingChar(prev_char);
+    if (expected_closing != 0 && expected_closing == next_char)
+        return 2;
+
+    if (E.cursor.x > 0 && prev_char == ' ') {
+        size_t line_len;
+        char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+        if (line_text) {
+            int space_count = 0;
+            for (int i = E.cursor.x - 1; i >= 0 && line_text[i] == ' '; i--)
+                space_count++;
+            free(line_text);
+
+            int dist_to_tab_stop = (E.cursor.x % TAB_SIZE == 0) ? TAB_SIZE : (E.cursor.x % TAB_SIZE);
+            if (space_count >= dist_to_tab_stop)
+                return (size_t)dist_to_tab_stop;
+        }
+    }
+
+    return 1;
+}
+
+void editorDeleteChar(DeleteDirection dir) {
     if (E.sel.active) {
         editorDeleteSelectedText();
         return;
     }
 
     if (E.buf.num_lines == 0) return;
-    if (E.cursor.x == 0 && E.cursor.y == 0 && is_backspace) return;
-
     size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
-    int prev_line_len = 0;
-    if (is_backspace && E.cursor.x == 0 && E.cursor.y > 0)
-        prev_line_len = editorGetLineLength(&E.buf, E.cursor.y - 1);
 
-    if (is_backspace) {
-        char prev_char = (offset > 0) ? ptCharAt(&E.buf.pt, offset - 1) : '\0';
-        char next_char = ptCharAt(&E.buf.pt, offset);
-        char closing_char = getClosingChar(prev_char);
+    if (dir == DELETE_BACKWARD) {
+        if (E.cursor.x == 0 && E.cursor.y == 0) return;
 
-        bool is_soft_tab = false;
-        int chars_to_delete = 1;
-        if (E.cursor.x > 0 && prev_char == ' ') {
-            size_t line_len;
-            char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-            if (line_text) {
-                int space_count = 0;
-                for (int i = E.cursor.x - 1; i >= 0; i--) {
-                    if (line_text[i] == ' ') space_count++;
-                    else break;
-                }
-
-                if (space_count > 0) {
-                    is_soft_tab = true;
-                    int dist_to_tab_stop = (E.cursor.x % TAB_SIZE == 0) ? TAB_SIZE : (E.cursor.x % TAB_SIZE);
-                    if (space_count >= dist_to_tab_stop) {
-                        chars_to_delete = dist_to_tab_stop;
-                    } else {
-                        chars_to_delete = space_count;
-                    }
-                }
-                free(line_text);
-            }
-        }
-
-        if (closing_char && next_char == closing_char) {
-            executeDelete(offset - 1, 2);
-            E.cursor.x--;
-        } else if (is_soft_tab) {
-            executeDelete(offset - chars_to_delete, chars_to_delete);
-            E.cursor.x -= chars_to_delete;
+        size_t delete_len = editorGetDeleteSize(offset);
+        executeDelete(offset - (delete_len == 2 ? 1 : delete_len), delete_len);
+        if (E.cursor.x == 0) {
+            E.cursor.y--;
+            E.cursor.x = (int)editorGetLineLength(&E.buf, E.cursor.y);
         } else {
-            executeDelete(offset - 1, 1);
-            if (E.cursor.x == 0) {
-                E.cursor.y--;
-                E.cursor.x = prev_line_len;
-            } else {
-                E.cursor.x--;
-            }
+            E.cursor.x -= (delete_len == 2) ? 1 : (int)delete_len;
         }
-    }
-    else if (offset < E.buf.pt.logical_size)
+    } else if (offset < E.buf.pt.logical_size) {
         executeDelete(offset, 1);
+    }
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
@@ -2498,6 +2448,50 @@ void editorCopyRowDown() {
 
     free(current_text);
     E.buf.dirty = true;
+}
+
+void editorInsertTab() {
+    int spaces_to_insert = TAB_SIZE - (E.cursor.x % TAB_SIZE);
+    if (E.sel.is_pasting) {
+        for (int i = 0; i < spaces_to_insert; i++)
+            editorInsertChar(' ');
+        E.sel.paste_len += spaces_to_insert;
+    } else {
+        editorBeginMacro();
+        for (int i = 0; i < spaces_to_insert; i++)
+            editorInsertChar(' ');
+        editorEndMacro();
+        updateMatchBracket();
+    }
+}
+
+void editorMoveToLineStart() {
+    if (E.cursor.y >= E.buf.num_lines) {
+        E.cursor.x = 0;
+    } else {
+        size_t line_len;
+        char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
+        if (line_text) {
+            int first_char_x = 0;
+            while ((size_t)first_char_x < line_len && (line_text[first_char_x] == ' ' || line_text[first_char_x] == '\t'))
+                first_char_x++;
+
+            if (E.cursor.x == first_char_x)
+                E.cursor.x = 0;
+            else
+                E.cursor.x = first_char_x;
+            free(line_text);
+        } else {
+            E.cursor.x = 0;
+        }
+    }
+    E.cursor.preferred_x = E.cursor.x;
+}
+
+void editorMoveToLineEnd() {
+    if (E.cursor.y >= E.buf.num_lines) return;
+    E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
+    E.cursor.preferred_x = E.cursor.x;
 }
 
 void editorSelectText(int ch) {
