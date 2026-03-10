@@ -1,8 +1,7 @@
 .vscode
 
 parsers/
+test_files/
 cypher
-*.exe
-*.txt
-data_generator.c
 raw_mode.c
+raw_mode.exe

@@ -1219,9 +1219,7 @@ bool editorEvaluateMatchPredicates(TSQueryMatch *match) {
             uint32_t len;
             const char *pred_name = ts_query_string_value_for_id(E.ts.query, steps[i].value_id, &len);
             if (strncmp(pred_name, "match?", len) == 0 && i + 2 < step_count) {
-                if (steps[i + 1].type == TSQueryPredicateStepTypeCapture &&
-                    steps[i + 2].type == TSQueryPredicateStepTypeString) {
-
+                if (steps[i + 1].type == TSQueryPredicateStepTypeCapture && steps[i + 2].type == TSQueryPredicateStepTypeString) {
                     uint32_t capture_id = steps[i + 1].value_id;
                     uint32_t regex_len;
                     const char *regex_str = ts_query_string_value_for_id(E.ts.query, steps[i + 2].value_id, &regex_len);
@@ -3201,19 +3199,32 @@ void executeInsert(size_t offset, const char *text, size_t len) {
     if (!E.sel.is_pasting) editorParseTreeSitter();
 
     E.buf.dirty = true;
-    bool has_nl = false;
-    for (size_t i = 0; i < len; i++) {
-        if (text[i] == '\n') {
-            has_nl = true;
-            break;
-        }
-    }
+    int newlines = 0;
+    for (size_t i = 0; i < len; i++)
+        if (text[i] == '\n') newlines++;
 
-    if (!has_nl)
+    if (newlines == 0) {
         for (int i = row + 1; i < E.buf.num_lines; i++)
             E.buf.line_offsets[i] += len;
-    else
-        editorUpdateLineOffsets(&E.buf);
+    } else {
+        if (E.buf.num_lines + newlines >= E.buf.line_capacity) {
+            while (E.buf.num_lines + newlines >= E.buf.line_capacity)
+                E.buf.line_capacity = E.buf.line_capacity == 0 ? LARGE_BUFFER_SIZE : E.buf.line_capacity * 2;
+            E.buf.line_offsets = safeRealloc(E.buf.line_offsets, sizeof(size_t) * E.buf.line_capacity);
+        }
+
+        if (row + 1 < E.buf.num_lines) {
+            memmove(&E.buf.line_offsets[row + 1 + newlines], &E.buf.line_offsets[row + 1], sizeof(size_t) * (E.buf.num_lines - (row + 1)));
+            for (int i = row + 1 + newlines; i < E.buf.num_lines + newlines; i++)
+                E.buf.line_offsets[i] += len;
+        }
+
+        int current_nl = 0;
+        for (size_t i = 0; i < len; i++)
+            if (text[i] == '\n')
+                E.buf.line_offsets[row + (++current_nl)] = offset + i + 1;
+        E.buf.num_lines += newlines;
+    }
 }
 
 void executeDelete(size_t offset, size_t len) {
@@ -3225,13 +3236,9 @@ void executeDelete(size_t offset, size_t len) {
     char *deleted_text = safeMalloc(len + 1);
     ptReadLogical(&E.buf.pt, offset, len, deleted_text);
 
-    bool has_nl = false;
-    for (size_t i = 0; i < len; i++) {
-        if (deleted_text[i] == '\n') {
-            has_nl = true;
-            break;
-        }
-    }
+    int newlines = 0;
+    for (size_t i = 0; i < len; i++)
+        if (deleted_text[i] == '\n') newlines++;
 
     recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
     editorEditTreeSitter(offset, len, 0, NULL);
@@ -3239,11 +3246,17 @@ void executeDelete(size_t offset, size_t len) {
     if (!E.sel.is_pasting) editorParseTreeSitter();
 
     E.buf.dirty = true;
-    if (!has_nl)
+    if (newlines == 0) {
         for (int i = row + 1; i < E.buf.num_lines; i++)
             E.buf.line_offsets[i] -= len;
-    else
-        editorUpdateLineOffsets(&E.buf);
+    } else {
+        if (row + 1 + newlines < E.buf.num_lines)
+            memmove(&E.buf.line_offsets[row + 1], &E.buf.line_offsets[row + 1 + newlines], sizeof(size_t) * (E.buf.num_lines - (row + 1 + newlines)));
+
+        E.buf.num_lines -= newlines;
+        for (int i = row + 1; i < E.buf.num_lines; i++)
+            E.buf.line_offsets[i] -= len;
+    }
     free(deleted_text);
 }
 
