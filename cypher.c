@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.5"
+#define CYPHER_VERSION      "1.4.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -42,6 +42,7 @@
 #define TAB_SIZE                4
 #define QUIT_TIMES              2
 #define SAVE_TIMES              2
+#define MIN_FILENAME_LEN        10
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT_MS         1000
 #define STATUS_LENGTH           80
@@ -1557,10 +1558,12 @@ void editorSetStatusMsg(const char *msg) {
 
 void editorDrawStatusBar(AppendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
+    char status[LARGE_BUFFER_SIZE], rstatus[STATUS_LENGTH], lsuffix[STATUS_LENGTH];
 
-    char status[LARGE_BUFFER_SIZE], rstatus[SMALL_BUFFER_SIZE];
-    int max_name_len = E.view.screen_cols - 30;
-    if (max_name_len < 10) max_name_len = 10;
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
+    int lsuffix_len = snprintf(lsuffix, sizeof(lsuffix), " - %d lines %s", E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
+    int max_name_len = E.view.screen_cols - lsuffix_len - rlen - 1;
+    if (max_name_len < MIN_FILENAME_LEN) max_name_len = MIN_FILENAME_LEN;
 
     const char *display_name = E.buf.filename ? E.buf.filename : "[No Name]";
     char truncated_name[LARGE_BUFFER_SIZE];
@@ -1572,8 +1575,7 @@ void editorDrawStatusBar(AppendBuffer *ab) {
         }
     }
 
-    int len = snprintf(status, sizeof(status), "%s - %d lines %s", display_name, E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
+    int len = snprintf(status, sizeof(status), "%s%s", display_name, lsuffix);
     if (len > E.view.screen_cols) len = E.view.screen_cols;
 
     abAppend(ab, status, len);
