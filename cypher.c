@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <dlfcn.h>
+#include <limits.h>
 #include <tree_sitter/api.h>
 
 #ifdef __APPLE__
@@ -85,6 +86,10 @@
 #define MASK_8BIT               0xFF
 #define MASK_6BIT               0x3F
 #define MOUSE_BTN_MASK          3
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 /*** Tree Sitter Function Prototypes ***/
 TSLanguage *tree_sitter_c(void);
@@ -548,7 +553,7 @@ void editorInit() {
     char exe_dir[LARGE_BUFFER_SIZE];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char theme_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    char theme_path[PATH_MAX];
     snprintf(theme_path, sizeof(theme_path), "%s/theme.config", exe_dir);
     editorLoadThemeConfig(theme_path);
 }
@@ -1552,11 +1557,24 @@ void editorSetStatusMsg(const char *msg) {
 
 void editorDrawStatusBar(AppendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
-    char status[STATUS_LENGTH], rstatus[STATUS_LENGTH];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.buf.filename ? E.buf.filename : "[No Name]", E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
+
+    char status[LARGE_BUFFER_SIZE], rstatus[SMALL_BUFFER_SIZE];
+    int max_name_len = E.view.screen_cols - 30;
+    if (max_name_len < 10) max_name_len = 10;
+
+    const char *display_name = E.buf.filename ? E.buf.filename : "[No Name]";
+    char truncated_name[LARGE_BUFFER_SIZE];
+    if (E.buf.filename) {
+        int name_len = strlen(E.buf.filename);
+        if (name_len > max_name_len) {
+            snprintf(truncated_name, sizeof(truncated_name), "...%s", E.buf.filename + (name_len - max_name_len + 3));
+            display_name = truncated_name;
+        }
+    }
+
+    int len = snprintf(status, sizeof(status), "%s - %d lines %s", display_name, E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
-    if (len > E.view.screen_cols)
-        len = E.view.screen_cols;
+    if (len > E.view.screen_cols) len = E.view.screen_cols;
     abAppend(ab, status, len);
 
     while (len < E.view.screen_cols) {
@@ -3832,7 +3850,7 @@ void editorInitTreeSitter() {
     char exe_dir[LARGE_BUFFER_SIZE];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char query_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    char query_path[PATH_MAX];
     snprintf(query_path, sizeof(query_path), "%s/queries/%s/highlights.scm", exe_dir, lang_name);
 
     char *query_string = editorReadFileIntoString(query_path);
@@ -4038,7 +4056,7 @@ TSLanguage *editorLoadLanguage(const char *filename) {
     char exe_dir[LARGE_BUFFER_SIZE];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char lib_path[LARGE_BUFFER_SIZE + BUFFER_SIZE];
+    char lib_path[PATH_MAX];
     snprintf(lib_path, sizeof(lib_path), "%s/parsers/tree-sitter-%s.so", exe_dir, lang_name);
 
     E.ts.language_lib = dlopen(lib_path, RTLD_LAZY);
