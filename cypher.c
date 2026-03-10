@@ -45,7 +45,7 @@
 #define MIN_FILENAME_LEN        10
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT_MS         1000
-#define STATUS_LENGTH           80
+#define STATUS_LENGTH           256
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
 #define LARGE_BUFFER_SIZE       1024
@@ -1592,25 +1592,37 @@ void editorDrawStatusBar(AppendBuffer *ab) {
 }
 
 void editorDrawMsgBar(AppendBuffer *ab) {
-    abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE));
+    abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
 
-    int msg_len = strlen(E.sys.status_msg);
-    if (msg_len > E.view.screen_cols)
-        msg_len = E.view.screen_cols;
-    if (msg_len && time(NULL) - E.sys.status_msg_time < STATUS_MSG_TIMEOUT_SEC)
-        abAppend(ab, E.sys.status_msg, msg_len);
+    const char *lang_name = editorGetLanguageName(E.buf.filename);
+    const char *display_lang = lang_name ? lang_name : "";
 
-    if (E.find.active) {
-        char buf[SMALL_BUFFER_SIZE];
-        snprintf(buf, sizeof(buf), " %d/%d", E.find.current_idx + 1, E.find.num_matches);
-        int right_len = strlen(buf);
+    char right_buf[SMALL_BUFFER_SIZE];
+    int right_len;
+    if (E.find.active)
+        right_len = snprintf(right_buf, sizeof(right_buf), "%d/%d | %s", E.find.current_idx + 1, E.find.num_matches, display_lang);
+    else
+        right_len = snprintf(right_buf, sizeof(right_buf), "%s", display_lang);
 
-        while (msg_len + right_len < E.view.screen_cols) {
-            abAppend(ab, " ", 1);
-            msg_len++;
-        }
-        abAppend(ab, buf, right_len);
+    int max_msg_len = E.view.screen_cols - right_len - 1;
+    if (max_msg_len < 0)
+        max_msg_len = 0;
+
+    int msg_len = 0;
+    if (time(NULL) - E.sys.status_msg_time < STATUS_MSG_TIMEOUT_SEC) {
+        msg_len = strlen(E.sys.status_msg);
+        if (msg_len > max_msg_len)
+            msg_len = max_msg_len;
     }
+
+    if (msg_len > 0)
+        abAppend(ab, E.sys.status_msg, msg_len);
+    while (msg_len + right_len < E.view.screen_cols) {
+        abAppend(ab, " ", 1);
+        msg_len++;
+    }
+
+    abAppend(ab, right_buf, right_len);
 }
 
 void editorDrawWelcomeMessage(AppendBuffer *ab) {
