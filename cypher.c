@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.6"
+#define CYPHER_VERSION      "1.4.7"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -2277,10 +2277,14 @@ void editorDeleteChar(DeleteDirection dir) {
         if (E.cursor.x == 0 && E.cursor.y == 0) return;
 
         size_t delete_len = editorGetDeleteSize(offset);
+        int prev_line_len = 0;
+        if (E.cursor.x == 0)
+            prev_line_len = editorGetLineLength(&E.buf, E.cursor.y - 1);
+
         executeDelete(offset - (delete_len == 2 ? 1 : delete_len), delete_len);
         if (E.cursor.x == 0) {
             E.cursor.y--;
-            E.cursor.x = (int)editorGetLineLength(&E.buf, E.cursor.y);
+            E.cursor.x = prev_line_len; 
         } else {
             E.cursor.x -= (delete_len == 2) ? 1 : (int)delete_len;
         }
@@ -3939,7 +3943,11 @@ void editorParseTreeSitter() {
         .read = read_piece_table,
         .encoding = TSInputEncodingUTF8
     };
-    E.ts.tree = ts_parser_parse(E.ts.parser, E.ts.tree, input);
+
+    TSTree *new_tree = ts_parser_parse(E.ts.parser, E.ts.tree, input);
+    if (E.ts.tree)
+        ts_tree_delete(E.ts.tree);
+    E.ts.tree = new_tree;
 }
 
 const char *read_piece_table(void *payload, uint32_t byte_index, TSPoint position, uint32_t *bytes_read) {
@@ -3983,8 +3991,7 @@ void editorLoadTheme(TSQuery *query) {
         uint32_t color = E.ts.default_fg;
         int best_match_len = 0;
         for (int r = 0; r < E.ts.num_theme_rules; r++) {
-            if (length >= (uint32_t)E.ts.theme_rules[r].len && 
-                strncmp(name, E.ts.theme_rules[r].prefix, E.ts.theme_rules[r].len) == 0) {
+            if (length >= (uint32_t)E.ts.theme_rules[r].len && strncmp(name, E.ts.theme_rules[r].prefix, E.ts.theme_rules[r].len) == 0) {
                 if (length == (uint32_t)E.ts.theme_rules[r].len || name[E.ts.theme_rules[r].len] == '.') {
                     if (E.ts.theme_rules[r].len > best_match_len) {
                         color = E.ts.theme_rules[r].color;
@@ -4010,10 +4017,12 @@ void editorLoadThemeConfig(const char *filename) {
     FILE *fp = fopen(filename, "r");
     if (!fp) return;
 
-    char line[256];
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
     int capacity = SMALL_BUFFER_SIZE;
     E.ts.theme_rules = safeMalloc(sizeof(ThemeRule) * capacity);
-    while (fgets(line, sizeof(line), fp)) {
+    while ((linelen = getline(&line, &linecap, fp)) != -1) {
         line[strcspn(line, "\r\n")] = '\0';
 
         if (line[0] == '\0' || line[0] == '#') continue;
@@ -4039,6 +4048,8 @@ void editorLoadThemeConfig(const char *filename) {
         E.ts.theme_rules[E.ts.num_theme_rules].color = strtol(val, NULL, 16);
         E.ts.num_theme_rules++;
     }
+
+    free(line);
     fclose(fp);
 }
 
