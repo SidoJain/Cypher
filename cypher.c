@@ -1575,8 +1575,8 @@ void editorDrawStatusBar(AppendBuffer *ab) {
     int len = snprintf(status, sizeof(status), "%s - %d lines %s", display_name, E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
     if (len > E.view.screen_cols) len = E.view.screen_cols;
-    abAppend(ab, status, len);
 
+    abAppend(ab, status, len);
     while (len < E.view.screen_cols) {
         if (E.view.screen_cols - len == rlen) {
             abAppend(ab, rstatus, rlen);
@@ -4053,6 +4053,11 @@ TSLanguage *editorLoadLanguage(const char *filename) {
     const char *lang_name = editorGetLanguageName(filename);
     if (!lang_name) return NULL;
 
+    if (E.ts.language_lib) {
+        dlclose(E.ts.language_lib);
+        E.ts.language_lib = NULL;
+    }
+
     char exe_dir[LARGE_BUFFER_SIZE];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
@@ -4068,10 +4073,13 @@ TSLanguage *editorLoadLanguage(const char *filename) {
     char func_name[SMALL_BUFFER_SIZE];
     snprintf(func_name, sizeof(func_name), "tree_sitter_%s", lang_name);
 
+    dlerror();
     TSLanguage *(*get_language)(void);
     *(void **)(&get_language) = dlsym(E.ts.language_lib, func_name);
-    if (!get_language) {
-        editorSetStatusMsg(dlerror());
+
+    const char *dlsym_err = dlerror();
+    if (dlsym_err) {
+        editorSetStatusMsg(dlsym_err);
         dlclose(E.ts.language_lib);
         E.ts.language_lib = NULL;
         return NULL;
