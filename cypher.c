@@ -2701,6 +2701,14 @@ void clipboardCopyToSystem(const char *data, int len) {
         }
     #endif
 
+    if (getenv("WSL_DISTRO_NAME") != NULL) {        // WSL
+        FILE *pipe = popen("clip.exe 2>/dev/null", "w");
+        if (pipe != NULL) {
+            fwrite(data, 1, len, pipe);
+            if (pclose(pipe) == 0) return;
+        }
+    }
+
     if (getenv("SSH_TTY") == NULL) {
         if (getenv("WAYLAND_DISPLAY")) {            // Wayland
             FILE *pipe = popen("wl-copy 2>/dev/null", "w");
@@ -2711,6 +2719,7 @@ void clipboardCopyToSystem(const char *data, int len) {
         }
         if (getenv("DISPLAY")) {                    // X11
             FILE *pipe = popen("xclip -selection clipboard 2>/dev/null", "w");
+            if (!pipe) pipe = popen("xsel --clipboard --input 2>/dev/null", "w");
             if (pipe) {
                 fwrite(data, 1, len, pipe);
                 if (pclose(pipe) == 0) return;
