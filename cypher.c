@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.4.7"
+#define CYPHER_VERSION      "1.5.0"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -322,7 +322,7 @@ int getCursorPosition(int *, int *);
 // input parsing
 int editorReadKey();
 void editorProcessStandardKey(int);
-void editorProcessKeypress();
+bool editorProcessKeypress();
 char *editorPrompt(char *, void (*)(const char *, int), char *);
 
 // output rendering
@@ -489,16 +489,29 @@ int main(int argc, char *argv[]) {
 
     editorInitTreeSitter();
     if (E.sys.status_msg[0] == '\0') editorSetStatusMsg("HELP: Ctrl-H");
-    while (1) {
+
+    bool needs_refresh = true;
+    while (true) {
         if (E.view.resized) {
             E.view.resized = 0;
             if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
             E.view.screen_rows -= UI_RESERVED_ROWS;
+            needs_refresh = true;
         }
 
-        if (!E.sel.is_pasting)
+        if (E.sys.status_msg_time != 0 && (time(NULL) - E.sys.status_msg_time >= STATUS_MSG_TIMEOUT_SEC)) {
+            E.sys.status_msg_time = 0;
+            E.sys.status_msg[0] = '\0';
+            needs_refresh = true;
+        }
+
+        if (needs_refresh && !E.sel.is_pasting) {
             editorRefreshScreen();
-        editorProcessKeypress();
+            needs_refresh = false;
+        }
+
+        if (editorProcessKeypress())
+            needs_refresh = true;
     }
 
     return 0;
@@ -721,7 +734,7 @@ int editorReadKey() {
         if (seq[0] == '[') {
             if (seq[1] == '<') {
                 int i = 2;
-                while (1) {
+                while (true) {
                     if (read(STDIN_FILENO, &seq[i], 1) != 1) return ESCAPE_CHAR;
                     if (seq[i] == 'm' || seq[i] == 'M') break;
                     i++;
@@ -894,9 +907,9 @@ void editorProcessStandardKey(int ch) {
         editorInsertChar(ch);
 }
 
-void editorProcessKeypress() {
+bool editorProcessKeypress() {
     int ch = editorReadKey();
-    if (ch == 0) return;        // phantom key
+    if (ch == 0) return false;  // phantom key
     if (ch != CTRL_KEY('q'))
         E.buf.quit_times = QUIT_TIMES;
 
@@ -1152,6 +1165,8 @@ void editorProcessKeypress() {
             if (!E.sel.is_pasting) updateMatchBracket();
             break;
     }
+
+    return true;
 }
 
 char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *initial) {
@@ -1171,13 +1186,19 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
         free(initial);
     }
 
-    while (1) {
-        char msg[STATUS_LENGTH];
-        snprintf(msg, sizeof(msg), prompt, buf);
-        editorSetStatusMsg(msg);
-        editorRefreshScreen();
+    bool needs_refresh = true;
+    while (true) {
+        if (needs_refresh) {
+            char msg[STATUS_LENGTH];
+            snprintf(msg, sizeof(msg), prompt, buf);
+            editorSetStatusMsg(msg);
+            editorRefreshScreen();
+            needs_refresh = false;
+        }
 
         int ch = editorReadKey();
+        if (ch == 0) continue;
+        needs_refresh = true;
         if (ch == DEL_KEY || ch == BACKSPACE) {
             if (buf_len != 0)
                 buf[--buf_len] = '\0';
@@ -2920,12 +2941,18 @@ void editorReplace() {
     int replaced = 0;
     bool done = false;
     int idx = E.find.current_idx < 0 ? 0 : E.find.current_idx;
+    bool needs_refresh = true;
     while (!done && E.find.num_matches > 0) {
-        editorCenterViewOnMatch();
-        editorSetStatusMsg("Arrows: navigate, Enter: replace, A: all, ESC: cancel");
-        editorRefreshScreen();
+        if (needs_refresh) {
+            editorCenterViewOnMatch();
+            editorSetStatusMsg("Arrows: navigate, Enter: replace, A: all, ESC: cancel");
+            editorRefreshScreen();
+            needs_refresh = false;
+        }
 
         int key = editorReadKey();
+        if (key == 0) continue;
+        needs_refresh = true;
         switch (key) {
             case ESCAPE_CHAR:
                 done = true;
@@ -3373,7 +3400,7 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
     int direction = (bracket == '(' || bracket == '{' || bracket == '[') ? 1 : -1;
     int count = 1;
 
-    while (1) {
+    while (true) {
         if (direction == 1) {
             current_offset++;
             if (current_offset >= E.buf.pt.logical_size) break;
