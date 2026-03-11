@@ -49,6 +49,7 @@
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
 #define LARGE_BUFFER_SIZE       1024
+#define BUFFER_SIZE_PADDING     64
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
 #define DEFAULT_FILE_PERMS      0644
@@ -510,8 +511,7 @@ int main(int argc, char *argv[]) {
             needs_refresh = false;
         }
 
-        if (editorProcessKeypress())
-            needs_refresh = true;
+        if (editorProcessKeypress()) needs_refresh = true;
     }
 
     return 0;
@@ -564,10 +564,10 @@ void editorInit() {
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
     E.view.screen_rows -= UI_RESERVED_ROWS;
 
-    char exe_dir[LARGE_BUFFER_SIZE];
+    char exe_dir[PATH_MAX];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char theme_path[PATH_MAX];
+    char theme_path[PATH_MAX + BUFFER_SIZE_PADDING];
     snprintf(theme_path, sizeof(theme_path), "%s/theme.config", exe_dir);
     editorLoadThemeConfig(theme_path);
 }
@@ -2740,7 +2740,12 @@ void clipboardCopyToSystem(const char *data, int len) {
         }
         if (getenv("DISPLAY")) {                    // X11
             FILE *pipe = popen("xclip -selection clipboard 2>/dev/null", "w");
-            if (!pipe) pipe = popen("xsel --clipboard --input 2>/dev/null", "w");
+            if (pipe) {
+                fwrite(data, 1, len, pipe);
+                if (pclose(pipe) == 0) return;
+            }
+
+            pipe = popen("xsel --clipboard --input 2>/dev/null", "w");
             if (pipe) {
                 fwrite(data, 1, len, pipe);
                 if (pclose(pipe) == 0) return;
@@ -3304,7 +3309,6 @@ void editorUndo() {
 
     int target_transaction = history.undo_stack[history.undo_top].transaction_id;
     bool is_macro = (target_transaction != 0);
-
     do {
         if (history.undo_top < 0) break;
         EditCommand *cmd = &history.undo_stack[history.undo_top];
@@ -3341,7 +3345,6 @@ void editorRedo() {
 
     int target_transaction = history.redo_stack[history.redo_top].transaction_id;
     bool is_macro = (target_transaction != 0);
-
     do {
         if (history.redo_top < 0) break;
         EditCommand *cmd = &history.redo_stack[history.redo_top];
@@ -3531,9 +3534,9 @@ void editorOpen(const char *filename) {
         ptInit(&E.buf.pt, expanded_buffer, expanded_len);
         free(expanded_buffer);
         free(buffer);
-    }
-    else
+    } else {
         ptInit(&E.buf.pt, "", 0);
+    }
 
     fclose(fp);
     editorUpdateLineOffsets(&E.buf);
@@ -3576,8 +3579,7 @@ void editorSave() {
 
     mode_t file_mode = DEFAULT_FILE_PERMS;
     struct stat st;
-    if (stat(E.buf.filename, &st) == 0)
-        file_mode = st.st_mode; // keep existing permissions
+    if (stat(E.buf.filename, &st) == 0) file_mode = st.st_mode; // keep existing permissions
     int fd = open(tmp_filename,
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
@@ -3650,7 +3652,7 @@ void editorSave() {
 
 void panicSave(int signum) {
     if (E.buf.dirty && E.buf.pt.pieces) {
-        char path[LARGE_BUFFER_SIZE];
+        char path[PATH_MAX];
         size_t i = 0;
         const char *ext = "_tmp.txt";
         const char *name = E.buf.filename ? E.buf.filename : "untitled";
@@ -3707,9 +3709,9 @@ void clampCursorPosition() {
         return;
     }
 
-    if (E.cursor.y < 0)
+    if (E.cursor.y < 0) {
         E.cursor.y = 0;
-    else if (E.cursor.y >= E.buf.num_lines) {
+    } else if (E.cursor.y >= E.buf.num_lines) {
         E.cursor.y = E.buf.num_lines - 1;
         E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
         return;
@@ -3793,7 +3795,7 @@ char *editorReadFileIntoString(const char *filepath) {
 }
 
 void getEditorDirectory(char *dir, size_t size) {
-    char path[LARGE_BUFFER_SIZE];
+    char path[PATH_MAX];
     memset(path, 0, sizeof(path));
 
 #ifdef __APPLE__
@@ -3885,8 +3887,7 @@ char *safeStrdup(const char *str) {
 void abAppend(AppendBuffer *ab, const char *str, int len) {
     if (ab->len + len >= ab->capacity) {
         int new_capacity = ab->capacity == 0 ? LARGE_BUFFER_SIZE : ab->capacity * 2;
-        while (new_capacity < ab->len + len)
-            new_capacity *= 2;
+        while (new_capacity < ab->len + len) new_capacity *= 2;
 
         ab->b = safeRealloc(ab->b, new_capacity);
         ab->capacity = new_capacity;
@@ -3914,10 +3915,10 @@ void editorInitTreeSitter() {
     ts_parser_set_language(E.ts.parser, lang);
     const char *lang_name = editorGetLanguageName(E.buf.filename);
 
-    char exe_dir[LARGE_BUFFER_SIZE];
+    char exe_dir[PATH_MAX];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char query_path[PATH_MAX];
+    char query_path[PATH_MAX + BUFFER_SIZE_PADDING];
     snprintf(query_path, sizeof(query_path), "%s/queries/%s/highlights.scm", exe_dir, lang_name);
 
     char *query_string = editorReadFileIntoString(query_path);
@@ -4073,7 +4074,6 @@ void editorLoadThemeConfig(const char *filename) {
     E.ts.theme_rules = safeMalloc(sizeof(ThemeRule) * capacity);
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
         line[strcspn(line, "\r\n")] = '\0';
-
         if (line[0] == '\0' || line[0] == '#') continue;
         if (strncmp(line, "default=#", 9) == 0) {
             E.ts.default_fg = strtol(line + 9, NULL, 16);
@@ -4132,10 +4132,10 @@ TSLanguage *editorLoadLanguage(const char *filename) {
         E.ts.language_lib = NULL;
     }
 
-    char exe_dir[LARGE_BUFFER_SIZE];
+    char exe_dir[PATH_MAX];
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
-    char lib_path[PATH_MAX];
+    char lib_path[PATH_MAX + BUFFER_SIZE_PADDING];
     snprintf(lib_path, sizeof(lib_path), "%s/parsers/tree-sitter-%s.so", exe_dir, lang_name);
 
     E.ts.language_lib = dlopen(lib_path, RTLD_LAZY);
