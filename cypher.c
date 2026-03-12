@@ -369,8 +369,8 @@ size_t editorGetLogicalOffset(EditorBuffer *, int, int);
 void editorOffsetToRowCol(EditorBuffer *, size_t, int *, int *);
 
 // line editing
-int get_line_indentation(const char *, size_t);
-IndentStrategy get_indent_strategy(const char *, size_t);
+int getLineIndentation(const char *, size_t);
+IndentStrategy getIndentStrategy(const char *, size_t);
 void editorInsertChar(int);
 size_t editorGetDeleteSize(size_t);
 void editorDeleteChar(DeleteDirection);
@@ -456,7 +456,7 @@ void abFree(AppendBuffer *);
 void editorInitTreeSitter();
 void editorEditTreeSitter(size_t, size_t, size_t, const char *);
 void editorParseTreeSitter();
-const char *read_piece_table(void *, uint32_t, TSPoint, uint32_t *);
+const char *readPieceTable(void *, uint32_t, TSPoint, uint32_t *);
 void editorLoadTheme(TSQuery *);
 void editorLoadThemeConfig(const char *);
 const char *editorGetLanguageName(const char *);
@@ -2217,7 +2217,7 @@ void editorOffsetToRowCol(EditorBuffer *buf, size_t offset, int *row, int *col) 
     *col = offset - buf->line_offsets[found_row];
 }
 
-int get_line_indentation(const char *line_text, size_t line_len) {
+int getLineIndentation(const char *line_text, size_t line_len) {
     if (!line_text || E.sel.is_pasting) return 0;
 
     int indent = 0;
@@ -2226,7 +2226,7 @@ int get_line_indentation(const char *line_text, size_t line_len) {
     return (indent > E.cursor.x) ? E.cursor.x : indent;
 }
 
-IndentStrategy get_indent_strategy(const char *line_text, size_t line_len) {
+IndentStrategy getIndentStrategy(const char *line_text, size_t line_len) {
     if (!line_text || E.cursor.x == 0 || E.sel.is_pasting) return INDENT_NONE;
 
     char prev = line_text[E.cursor.x - 1];
@@ -2320,8 +2320,8 @@ void editorInsertNewline() {
     size_t line_len;
     char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
 
-    int base_indent = get_line_indentation(line_text, line_len);
-    IndentStrategy strategy = get_indent_strategy(line_text, line_len);
+    int base_indent = getLineIndentation(line_text, line_len);
+    IndentStrategy strategy = getIndentStrategy(line_text, line_len);
 
     if (strategy == INDENT_SPLIT) {
         int total_len = (base_indent + TAB_SIZE + 1) + (base_indent + 1);
@@ -3942,7 +3942,7 @@ void editorInitTreeSitter() {
     if (E.buf.pt.logical_size > 0) {
         TSInput input = {
             .payload = &E.buf.pt,
-            .read = read_piece_table,
+            .read = readPieceTable,
             .encoding = TSInputEncodingUTF8
         };
         E.ts.tree = ts_parser_parse(E.ts.parser, NULL, input);
@@ -3990,7 +3990,7 @@ void editorParseTreeSitter() {
     if (!E.ts.parser) return;
     TSInput input = {
         .payload = &E.buf.pt,
-        .read = read_piece_table,
+        .read = readPieceTable,
         .encoding = TSInputEncodingUTF8
     };
 
@@ -4000,7 +4000,7 @@ void editorParseTreeSitter() {
     E.ts.tree = new_tree;
 }
 
-const char *read_piece_table(void *payload, uint32_t byte_index, TSPoint position, uint32_t *bytes_read) {
+const char *readPieceTable(void *payload, uint32_t byte_index, TSPoint position, uint32_t *bytes_read) {
     (void)position;
     PieceTable *pt = (PieceTable *)payload;
     if (byte_index >= pt->logical_size) {
