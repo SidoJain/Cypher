@@ -284,7 +284,6 @@ typedef struct {
     EditCommand redo_stack[UNDO_REDO_STACK_SIZE];
     int redo_top;
     long last_edit_time;
-    int undo_in_progress;
     int current_transaction_id;
     bool in_transaction;
     int save_point;
@@ -298,7 +297,6 @@ EditorUndoRedo history = {
     .undo_top = -1,
     .redo_top = -1,
     .last_edit_time = 0,
-    .undo_in_progress = 0,
     .current_transaction_id = 0,
     .in_transaction = false,
     .save_point = -1,
@@ -749,7 +747,7 @@ int editorReadKey() {
 
                     x--;
                     y--;
-                    int motion = (b & 32);
+                    bool motion = (b & 32) != 0;
                     if ((b & MOUSE_BTN_MASK) == 0) {
                         E.cursor.x = x + E.view.col_offset;
                         E.cursor.y = y + E.view.row_offset;
@@ -1109,7 +1107,6 @@ bool editorProcessKeypress() {
         case ARROW_RIGHT:
         case ARROW_UP:
         case ARROW_DOWN:
-            history.undo_in_progress = 0;
             E.sel.active = false;
             editorMoveCursor(ch);
             updateMatchBracket();
