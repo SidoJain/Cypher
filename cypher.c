@@ -357,6 +357,7 @@ void ptInit(PieceTable *, const char *, size_t);
 void ptFree(PieceTable *);
 void ptInsert(PieceTable *, size_t, const char *, size_t);
 void ptDelete(PieceTable *, size_t, size_t);
+void ptSquash(PieceTable *);
 bool ptFindPiece(PieceTable *, size_t, size_t *, size_t *);
 void ptReadLogical(PieceTable *, size_t, size_t, char *);
 char ptCharAt(PieceTable *, size_t);
@@ -2041,6 +2042,20 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
     pt->logical_size -= len;
 }
 
+void ptSquash(PieceTable *pt) {
+    if (pt->num_pieces <= 1 && pt->add_len == 0) return;
+
+    char *new_orig_buf = safeMalloc(pt->logical_size + 1);
+    ptReadLogical(pt, 0, pt->logical_size, new_orig_buf);
+    free(pt->orig_buf);
+
+    pt->orig_buf = new_orig_buf;
+    pt->orig_len = pt->logical_size;
+    pt->add_len = 0; 
+    pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, pt->logical_size};
+    pt->num_pieces = 1;
+}
+
 bool ptFindPiece(PieceTable *pt, size_t offset, size_t *piece_idx, size_t *piece_offset) {
     if (offset > pt->logical_size) return false;
 
@@ -3640,6 +3655,7 @@ void editorSave() {
             E.buf.dirty = false;
             E.buf.quit_times = QUIT_TIMES;
             history.save_point = history.undo_top;
+            ptSquash(&E.buf.pt);
 
             char msg[STATUS_LENGTH];
             snprintf(msg, sizeof(msg), "%s written to disk", sizebuf);
