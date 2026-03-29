@@ -1188,6 +1188,13 @@ char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *init
 
     bool needs_refresh = true;
     while (true) {
+        if (E.view.resized) {
+            E.view.resized = 0;
+            if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
+            E.view.screen_rows -= UI_RESERVED_ROWS;
+            needs_refresh = true;
+        }
+
         if (needs_refresh) {
             char msg[STATUS_LENGTH];
             snprintf(msg, sizeof(msg), prompt, buf);
@@ -3018,6 +3025,13 @@ void editorReplace() {
     int idx = E.find.current_idx < 0 ? 0 : E.find.current_idx;
     bool needs_refresh = true;
     while (!done && E.find.num_matches > 0) {
+        if (E.view.resized) {
+            E.view.resized = 0;
+            if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
+            E.view.screen_rows -= UI_RESERVED_ROWS;
+            needs_refresh = true;
+        }
+
         if (needs_refresh) {
             editorCenterViewOnMatch();
             editorSetStatusMsg("Arrows: navigate, Enter: replace, A: all, ESC: cancel");
