@@ -45,6 +45,7 @@
 #define MIN_FILENAME_LEN        10
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT_MS         1000
+#define DOUBLE_CLICK_MS         400
 #define STATUS_LENGTH           256
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
@@ -3483,7 +3484,7 @@ void editorMouseLeftClick() {
     static int last_click_x = -1;
     static int last_click_y = -1;
     long now = currentMillis();
-    if (now - last_click_time < 400 && E.cursor.x == last_click_x && E.cursor.y == last_click_y) {
+    if (now - last_click_time < DOUBLE_CLICK_MS && E.cursor.x == last_click_x && E.cursor.y == last_click_y) {
         editorMouseDoubleClick();
         last_click_time = 0;
         last_click_x = -1;
