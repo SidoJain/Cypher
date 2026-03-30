@@ -3767,10 +3767,10 @@ void clampCursorPosition() {
 }
 
 void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
-    const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+    const char *units[] = {"B", "KB", "MB", "GB", "TB", "PB"};
     int unit = 0;
     double size = bytes;
-    while (size >= 1024 && unit < 4) {
+    while (size >= 1024 && unit < (int)(sizeof(units) / sizeof(units[0])) - 1) {
         size /= 1024;
         unit++;
     }
