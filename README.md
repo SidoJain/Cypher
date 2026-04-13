@@ -139,6 +139,7 @@ If these files are not present, Cypher will safely fall back to plain text editi
 - C
 - C++
 - Python
+- Java
 
 ## Installation & Compilation
 
