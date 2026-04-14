@@ -141,6 +141,7 @@ If these files are not present, Cypher will safely fall back to plain text editi
 - Python
 - Java
 - Go
+- JSON
 
 ## Installation & Compilation
 
