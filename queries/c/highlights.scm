@@ -71,6 +71,7 @@
 (false) @boolean
 (number_literal) @number
 (char_literal) @character
+(escape_sequence) @character.escape
 
 (field_identifier) @property
 (statement_identifier) @label

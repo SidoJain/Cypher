@@ -114,7 +114,7 @@
   (character_literal)
   (string_literal)
 ] @string
-(escape_sequence) @string.escape
+(escape_sequence) @character.escape
 
 [
   (true)

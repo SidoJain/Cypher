@@ -16,6 +16,7 @@
 (float) @number
 (comment) @comment
 (string) @string
+(escape_sequence) @character.escape
 
 (interpolation "{" @punctuation.special "}" @punctuation.special) @embedded
 

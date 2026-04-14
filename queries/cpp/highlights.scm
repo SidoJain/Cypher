@@ -95,6 +95,7 @@
 
 (number_literal) @number
 (char_literal) @character
+(escape_sequence) @character.escape
 (string_literal) @string
 (raw_string_literal) @string
 (system_lib_string) @string
