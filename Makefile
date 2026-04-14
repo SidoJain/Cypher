@@ -8,7 +8,7 @@ FILE ?=
 INCLUDES = -I lib/tree-sitter/lib/include
 CFLAGS = -Wall -Wextra -pedantic -std=c99
 
-LANGS = c cpp python java
+LANGS = c cpp python java go
 PARSERS = $(patsubst %,parsers/tree-sitter-%.so,$(LANGS))
 
 all: $(EXE) $(PARSERS)
