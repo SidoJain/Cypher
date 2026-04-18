@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.1"
+#define CYPHER_VERSION      "1.5.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -241,6 +241,11 @@ typedef struct {
 } ThemeRule;
 
 typedef struct {
+    char *extension;
+    char *language;
+} LangMapping;
+
+typedef struct {
     TSParser *parser;
     TSTree *tree;
     TSQuery *query;
@@ -251,6 +256,8 @@ typedef struct {
     ThemeRule *theme_rules;
     int num_theme_rules;
     uint32_t default_fg;
+    LangMapping *lang_mappings;
+    int num_lang_mappings;
 } EditorTS;
 
 typedef struct {
@@ -462,6 +469,7 @@ void editorParseTreeSitter();
 const char *readPieceTable(void *, uint32_t, TSPoint, uint32_t *);
 void editorLoadTheme(TSQuery *);
 void editorLoadThemeConfig(const char *);
+void editorLoadTSConfig(const char *);
 const char *editorGetLanguageName(const char *);
 TSLanguage *editorLoadLanguage(const char *);
 void editorDebugSyntaxUnderCursor();
@@ -563,6 +571,8 @@ void editorInit() {
     E.ts.language_lib = NULL;
     E.ts.theme_colors = NULL;
     E.ts.theme_color_count = 0;
+    E.ts.lang_mappings = NULL;
+    E.ts.num_lang_mappings = 0;
 
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
     E.view.screen_rows -= UI_RESERVED_ROWS;
@@ -573,6 +583,10 @@ void editorInit() {
     char theme_path[PATH_MAX + BUFFER_SIZE_PADDING];
     snprintf(theme_path, sizeof(theme_path), "%s/theme.config", exe_dir);
     editorLoadThemeConfig(theme_path);
+
+    char ts_path[PATH_MAX + BUFFER_SIZE_PADDING];
+    snprintf(ts_path, sizeof(ts_path), "%s/ts.config", exe_dir);
+    editorLoadTSConfig(ts_path);
 }
 
 void editorCleanup() {
@@ -628,6 +642,16 @@ void editorCleanup() {
         free(E.ts.theme_rules);
         E.ts.theme_rules = NULL;
         E.ts.num_theme_rules = 0;
+    }
+
+    if (E.ts.lang_mappings) {
+        for (int i = 0; i < E.ts.num_lang_mappings; i++) {
+            free(E.ts.lang_mappings[i].extension);
+            free(E.ts.lang_mappings[i].language);
+        }
+        free(E.ts.lang_mappings);
+        E.ts.lang_mappings = NULL;
+        E.ts.num_lang_mappings = 0;
     }
 }
 
@@ -4190,24 +4214,61 @@ void editorLoadThemeConfig(const char *filename) {
     fclose(fp);
 }
 
+void editorLoadTSConfig(const char *filename) {
+    if (E.ts.lang_mappings) {
+        for (int i = 0; i < E.ts.num_lang_mappings; i++) {
+            free(E.ts.lang_mappings[i].extension);
+            free(E.ts.lang_mappings[i].language);
+        }
+        free(E.ts.lang_mappings);
+    }
+    E.ts.num_lang_mappings = 0;
+    E.ts.lang_mappings = NULL;
+
+    FILE *fp = fopen(filename, "r");
+    if (!fp) return;
+
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    int capacity = SMALL_BUFFER_SIZE;
+    E.ts.lang_mappings = safeMalloc(sizeof(LangMapping) * capacity);
+    while ((linelen = getline(&line, &linecap, fp)) != -1) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0] == '\0' || line[0] == '#') continue;
+
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+
+        char *lang = line;
+        char *exts = eq + 1;
+        char *ext_token = strtok(exts, ",");
+        while (ext_token != NULL) {
+            if (E.ts.num_lang_mappings >= capacity) {
+                capacity *= 2;
+                E.ts.lang_mappings = safeRealloc(E.ts.lang_mappings, sizeof(LangMapping) * capacity);
+            }
+
+            E.ts.lang_mappings[E.ts.num_lang_mappings].extension = safeStrdup(ext_token);
+            E.ts.lang_mappings[E.ts.num_lang_mappings].language = safeStrdup(lang);
+            E.ts.num_lang_mappings++;
+            ext_token = strtok(NULL, ",");
+        }
+    }
+
+    free(line);
+    fclose(fp);
+}
+
 const char *editorGetLanguageName(const char *filename) {
     if (!filename) return NULL;
     const char *ext = strrchr(filename, '.');
     if (!ext) return NULL;
 
-    if (strcmp(ext, ".c") == 0 || strcmp(ext, ".h") == 0) return "c";
-    if (strcmp(ext, ".cpp") == 0 || strcmp(ext, ".hpp") == 0) return "cpp";
-    if (strcmp(ext, ".rs") == 0) return "rust";
-    if (strcmp(ext, ".go") == 0) return "go";
-    if (strcmp(ext, ".java") == 0) return "java";
-    if (strcmp(ext, ".py") == 0) return "python";
-    if (strcmp(ext, ".js") == 0 || strcmp(ext, ".mjs") == 0) return "javascript";
-    if (strcmp(ext, ".ts") == 0) return "typescript";
-    if (strcmp(ext, ".sh") == 0 || strcmp(ext, ".bash") == 0) return "bash";
-    if (strcmp(ext, ".html") == 0) return "html";
-    if (strcmp(ext, ".css") == 0) return "css";
-    if (strcmp(ext, ".json") == 0) return "json";
-
+    for (int i = 0; i < E.ts.num_lang_mappings; i++)
+        if (strcmp(ext, E.ts.lang_mappings[i].extension) == 0)
+            return E.ts.lang_mappings[i].language;
     return NULL;
 }
 
