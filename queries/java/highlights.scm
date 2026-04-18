@@ -65,6 +65,13 @@
 "package" @keyword.directive
 "module" @keyword.directive
 
+; Imports
+(import_declaration
+  [
+    (identifier)
+    (scoped_identifier)
+  ] @constructor)
+
 ; Operators
 "--" @operator
 "-" @operator
