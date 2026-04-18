@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.0"
+#define CYPHER_VERSION      "1.5.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -334,6 +334,7 @@ void editorGetNormalizedSelection(int *, int *, int *, int *);
 bool editorIsCharInFindMatch(int, int);
 bool editorIsCharSelected(int, int, int, int, int, int);
 bool editorIsCharInBracket(int, int);
+void highlightFormatSpecifiers(size_t, size_t, uint32_t *);
 void editorDrawSingleRow(AppendBuffer *, int, size_t, uint32_t *);
 void editorRefreshScreen();
 void editorDrawRows(AppendBuffer *);
@@ -1432,6 +1433,46 @@ bool editorIsCharInBracket(int file_row, int cx) {
     return false;
 }
 
+void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *colors) {
+    if (!E.ts.tree || end_byte <= start_byte) return;
+
+    size_t byte_count = end_byte - start_byte;
+    char *text = safeMalloc(byte_count + 1);
+    ptReadLogical(&E.buf.pt, start_byte, byte_count, text);
+
+    uint32_t formatColor = 0;
+    for (int r = 0; r < E.ts.num_theme_rules; r++) {
+        if (strcmp(E.ts.theme_rules[r].prefix, "format_specifier") == 0) {
+            formatColor = E.ts.theme_rules[r].color;
+            break;
+        }
+    }
+
+    TSNode root = ts_tree_root_node(E.ts.tree);
+    for (size_t i = 0; i < byte_count - 1; i++) {
+        if (text[i] == '%') {
+            size_t j = i + 1;
+            if (text[j] == '%') {
+                i++; 
+                continue; 
+            }
+
+            while (j < byte_count && (text[j] == '-' || text[j] == '+' || text[j] == ' ' || text[j] == '#' || text[j] == '0' || text[j] == '.' || text[j] == '*' || (text[j] >= '0' && text[j] <= '9')))
+                j++;
+
+            if (j < byte_count && ((text[j] >= 'a' && text[j] <= 'z') || (text[j] >= 'A' && text[j] <= 'Z'))) {
+                TSNode node = ts_node_descendant_for_byte_range(root, start_byte + i, start_byte + i + 1);
+                const char *nodeType = ts_node_type(node);
+                if (nodeType && strstr(nodeType, "string") != NULL)
+                    for (size_t k = i; k <= j; k++)
+                        colors[k] = formatColor;
+                i = j;
+            }
+        }
+    }
+    free(text);
+}
+
 void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint32_t *colors) {
     static char *line_text = NULL;
     static size_t line_cap = 0;
@@ -1569,6 +1610,7 @@ void editorDrawRows(AppendBuffer *ab) {
         colors[i] = E.ts.default_fg;
 
     editorUpdateSyntaxColors(start_byte, end_byte, colors, priorities);
+    highlightFormatSpecifiers(start_byte, end_byte, colors);
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
         if (file_row >= E.buf.num_lines)
