@@ -133,5 +133,7 @@
   function: (selector_expression
     field: (field_identifier) @function.method))
 
+(package_clause (package_identifier) @constructor)
+
 ; Comments
 (comment) @comment
