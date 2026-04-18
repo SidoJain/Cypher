@@ -129,8 +129,8 @@
   (null_literal)
 ] @constant.builtin
 
-(this) @variable.builtin
-(super) @variable.builtin
+(this) @constant.builtin
+(super) @constant.builtin
 
 ; Properties / Labels
 (field_access field: (identifier) @property)

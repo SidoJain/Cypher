@@ -35,8 +35,10 @@
 "requires" @keyword
 "virtual" @keyword
 "module" @keyword
+"register" @keyword
 "export" @keyword
 "import" @keyword
+"thread_local" @keyword
 
 "co_await" @keyword.directive
 "co_yield" @keyword.directive
@@ -44,6 +46,7 @@
 "try" @keyword.directive
 "catch" @keyword.directive
 "break" @keyword.directive
+"goto" @keyword.directive
 "case" @keyword.directive
 "continue" @keyword.directive
 "default" @keyword.directive
@@ -106,6 +109,10 @@
 ("nullptr") @constant.builtin
 (this) @constructor
 
+"sizeof" @constant.builtin
+"alignof" @constant.builtin
+"alignas" @constant.builtin
+
 (field_identifier) @property
 (statement_identifier) @label
 (type_identifier) @type
@@ -116,7 +123,6 @@
 (namespace_identifier) @constructor
 (module_name (identifier) @constructor)
 
-"sizeof" @function
 (function_declarator
   declarator: (identifier) @function)
 

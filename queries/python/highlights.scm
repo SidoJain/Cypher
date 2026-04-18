@@ -92,6 +92,7 @@
 "global" @keyword
 "lambda" @keyword
 "nonlocal" @keyword
+"type" @keyword
 
 (attribute attribute: (identifier) @property)
 (class_definition name: (identifier) @type)
