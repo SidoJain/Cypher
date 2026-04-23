@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.2"
+#define CYPHER_VERSION      "1.5.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -128,6 +128,8 @@ typedef enum {
     ALT_SHIFT_ARROW_DOWN,
     MOUSE_SCROLL_UP = 2000,
     MOUSE_SCROLL_DOWN,
+    MOUSE_SCROLL_LEFT,
+    MOUSE_SCROLL_RIGHT,
     MOUSE_LEFT_CLICK,
     MOUSE_DRAG,
     MOUSE_LEFT_RELEASE,
@@ -157,9 +159,9 @@ typedef enum {
 } DeleteDirection;
 
 typedef enum {
-    SCROLL_PAGE,
-    SCROLL_LINE
-} ScrollUnit;
+    LEFT,
+    RIGHT
+} ScrollDirection;
 
 typedef struct {
     BufferSource source;
@@ -356,8 +358,10 @@ void editorScroll();
 void editorMoveCursor(int);
 void editorMoveWordLeft();
 void editorMoveWordRight();
-void editorScrollPageUp(ScrollUnit);
-void editorScrollPageDown(ScrollUnit);
+void editorScrollPageUp();
+void editorScrollPageDown();
+void editorScrollHorizontal(ScrollDirection);
+void editorScrollVertical(int);
 void editorJump();
 void editorJumpCallback(const char *, int);
 
@@ -773,6 +777,8 @@ int editorReadKey() {
                 if (sscanf(&seq[2], "%d;%d;%d", &b, &x, &y) == 3) {
                     if (b == 64) return MOUSE_SCROLL_UP;
                     else if (b == 65) return MOUSE_SCROLL_DOWN;
+                    else if (b == 66) return MOUSE_SCROLL_LEFT;
+                    else if (b == 67) return MOUSE_SCROLL_RIGHT;
 
                     x--;
                     y--;
@@ -864,6 +870,8 @@ int editorReadKey() {
                         int button = cb - ' ';
                         if (button == 64) return MOUSE_SCROLL_UP;
                         else if (button == 65) return MOUSE_SCROLL_DOWN;
+                        else if (button == 66) return MOUSE_SCROLL_LEFT;
+                        else if (button == 67) return MOUSE_SCROLL_RIGHT;
                         return ESCAPE_CHAR;
                     }
                 }
@@ -1057,11 +1065,11 @@ bool editorProcessKeypress() {
             break;
 
         case PAGE_UP:
-            editorScrollPageUp(SCROLL_PAGE);
+            editorScrollPageUp();
             updateMatchBracket();
             break;
         case PAGE_DOWN:
-            editorScrollPageDown(SCROLL_PAGE);
+            editorScrollPageDown();
             updateMatchBracket();
             break;
 
@@ -1074,12 +1082,10 @@ bool editorProcessKeypress() {
             updateMatchBracket();
             break;
         case CTRL_ARROW_UP:
-            editorScrollPageUp(SCROLL_LINE);
-            updateMatchBracket();
+            editorScrollVertical(-1);
             break;
         case CTRL_ARROW_DOWN:
-            editorScrollPageDown(SCROLL_LINE);
-            updateMatchBracket();
+            editorScrollVertical(1);
             break;
 
         case SHIFT_ARROW_LEFT:
@@ -1164,11 +1170,17 @@ bool editorProcessKeypress() {
             break;
 
         case MOUSE_SCROLL_UP:
-            editorScrollPageUp(SCROLL_LINE);
-            updateMatchBracket();
+            editorScrollVertical(-3);
             break;
         case MOUSE_SCROLL_DOWN:
-            editorScrollPageDown(SCROLL_LINE);
+            editorScrollVertical(3);
+            break;
+        case MOUSE_SCROLL_LEFT:
+            editorScrollHorizontal(LEFT);
+            updateMatchBracket();
+            break;
+        case MOUSE_SCROLL_RIGHT:
+            editorScrollHorizontal(RIGHT);
             updateMatchBracket();
             break;
 
@@ -1607,10 +1619,14 @@ void editorRefreshScreen() {
     editorDrawStatusBar(&ab);
     editorDrawMsgBar(&ab);
 
-    char buf[SMALL_BUFFER_SIZE];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursor.y - E.view.row_offset) + 1, (E.cursor.render_x - E.view.col_offset) + 1);
-    abAppend(&ab, buf, strlen(buf));
-    abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
+    int draw_y = (E.cursor.y - E.view.row_offset) + 1;
+    int draw_x = (E.cursor.render_x - E.view.col_offset) + 1;
+    if (draw_y >= 1 && draw_y <= E.view.screen_rows && draw_x >= 1 && draw_x <= E.view.screen_cols) {
+        char buf[SMALL_BUFFER_SIZE];
+        snprintf(buf, sizeof(buf), "\x1b[%d;%dH", draw_y, draw_x);
+        abAppend(&ab, buf, strlen(buf));
+        abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
+    }
 
     write(STDOUT_FILENO, ab.b, ab.len);
     abFree(&ab);
@@ -1792,14 +1808,24 @@ void editorScroll() {
         }
     }
 
-    if (E.cursor.y < E.view.row_offset)
-        E.view.row_offset = E.cursor.y;
-    if (E.cursor.y >= E.view.row_offset + E.view.screen_rows)
-        E.view.row_offset = E.cursor.y - E.view.screen_rows + 1;
-    if (E.cursor.render_x < E.view.col_offset)
-        E.view.col_offset = E.cursor.render_x;
-    if (E.cursor.render_x >= E.view.col_offset + E.view.screen_cols)
-        E.view.col_offset = E.cursor.render_x - E.view.screen_cols + 1;
+    static int last_cx = -1, last_cy = -1;
+    static int last_cols = -1, last_rows = -1;
+
+    bool requires_snap = (E.cursor.x != last_cx || E.cursor.y != last_cy) || (E.view.screen_cols != last_cols || E.view.screen_rows != last_rows);
+    last_cx = E.cursor.x;
+    last_cy = E.cursor.y;
+    last_cols = E.view.screen_cols;
+    last_rows = E.view.screen_rows;
+    if (requires_snap) {
+        if (E.cursor.y < E.view.row_offset)
+            E.view.row_offset = E.cursor.y;
+        if (E.cursor.y >= E.view.row_offset + E.view.screen_rows)
+            E.view.row_offset = E.cursor.y - E.view.screen_rows + 1;
+        if (E.cursor.render_x < E.view.col_offset)
+            E.view.col_offset = E.cursor.render_x;
+        if (E.cursor.render_x >= E.view.col_offset + E.view.screen_cols)
+            E.view.col_offset = E.cursor.render_x - E.view.screen_cols + 1;
+    }
 }
 
 void editorMoveCursor(int key) {
@@ -1882,10 +1908,10 @@ void editorMoveWordRight() {
     free(line_text);
 }
 
-void editorScrollPageUp(ScrollUnit unit) {
+void editorScrollPageUp() {
     if (E.buf.num_lines == 0) return;
 
-    int scroll_amount = (unit == SCROLL_PAGE) ? E.view.screen_rows : 1;
+    int scroll_amount = E.view.screen_rows;
     if (E.view.row_offset > 0) {
         if (scroll_amount > E.view.row_offset) scroll_amount = E.view.row_offset;
         E.view.row_offset -= scroll_amount;
@@ -1904,10 +1930,10 @@ void editorScrollPageUp(ScrollUnit unit) {
     }
 }
 
-void editorScrollPageDown(ScrollUnit unit) {
+void editorScrollPageDown() {
     if (E.buf.num_lines == 0) return;
 
-    int scroll_amount = (unit == SCROLL_PAGE) ? E.view.screen_rows : 1;
+    int scroll_amount = E.view.screen_rows;
     if (E.view.row_offset < E.buf.num_lines - E.view.screen_rows) {
         E.view.row_offset += scroll_amount;
         E.cursor.y += scroll_amount;
@@ -1923,6 +1949,49 @@ void editorScrollPageDown(ScrollUnit unit) {
         E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
         E.cursor.preferred_x = E.cursor.x;
     }
+}
+
+void editorScrollHorizontal(ScrollDirection direction) {
+    if (E.buf.num_lines == 0) return;
+
+    int scroll_amount = TAB_SIZE;
+    if (direction == LEFT) {
+        E.view.col_offset -= scroll_amount;
+        if (E.view.col_offset < 0) E.view.col_offset = 0;
+    } else { 
+        int max_rx = 0;
+        int start_row = E.view.row_offset;
+        int end_row = start_row + E.view.screen_rows;
+        if (end_row > E.buf.num_lines) end_row = E.buf.num_lines;
+
+        for (int i = start_row; i < end_row; i++) {
+            size_t line_len;
+            char *line_text = editorGetLine(&E.buf, i, &line_len);
+            if (line_text) {
+                int rx = editorLineCxToRx(line_text, line_len, line_len);
+                if (rx > max_rx) max_rx = rx;
+                free(line_text);
+            }
+        }
+
+        int max_col_offset = max_rx - MARGIN; 
+        if (max_col_offset < 0) max_col_offset = 0;
+
+        E.view.col_offset += scroll_amount;
+        if (E.view.col_offset > max_col_offset) {
+            E.view.col_offset = max_col_offset;
+        }
+    }
+}
+
+void editorScrollVertical(int lines) {
+    if (E.buf.num_lines == 0) return;
+
+    E.view.row_offset += lines;
+    if (E.view.row_offset < 0)
+        E.view.row_offset = 0;
+    if (E.view.row_offset >= E.buf.num_lines)
+        E.view.row_offset = E.buf.num_lines - 1;
 }
 
 void editorJump() {
