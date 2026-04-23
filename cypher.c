@@ -54,7 +54,6 @@
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
 #define DEFAULT_FILE_PERMS      0644
-#define MATCH_BUFFER_PADDING    50
 #define ALLOC_PADDING           256
 #define GROWTH_THRESHOLD        8192
 #define GROWTH_STEP             4096
@@ -85,7 +84,6 @@
 
 #define DEFAULT_FG_COLOR_HEX    0xFFFFFFFF
 #define SELECTION_COLOR_HEX     0xD4D4D4
-#define PRIORITY_HIGH           0xFFFF
 #define MASK_8BIT               0xFF
 #define MASK_6BIT               0x3F
 #define MOUSE_BTN_MASK          3
@@ -93,9 +91,6 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
-
-/*** Tree Sitter Function Prototypes ***/
-TSLanguage *tree_sitter_c(void);
 
 /*** Structs and Enums ***/
 
@@ -171,7 +166,6 @@ typedef struct {
 
 typedef struct {
     char *orig_buf;
-    size_t orig_len;
     char *add_buf;
     size_t add_len;
     size_t add_capacity;
@@ -338,7 +332,6 @@ char *editorPrompt(char *, void (*)(const char *, int), char *);
 bool editorEvaluateMatchPredicates(TSQueryMatch *);
 void editorApplyMatchColors(TSQueryMatch *, size_t, size_t, uint32_t *, uint16_t *);
 void editorUpdateSyntaxColors(size_t, size_t, uint32_t *, uint16_t *);
-char *editorRenderLine(const char *, size_t, int *);
 void editorGetNormalizedSelection(int *, int *, int *, int *);
 bool editorIsCharInFindMatch(int, int);
 bool editorIsCharSelected(int, int, int, int, int, int);
@@ -701,6 +694,7 @@ void enableRawMode() {
 
 void disableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.sys.orig_termios) == -1) die("tcsetattr");
+    write(STDOUT_FILENO, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
     write(STDOUT_FILENO, CURSOR_DEFAULT, sizeof(CURSOR_DEFAULT) - 1);
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
     write(STDOUT_FILENO, BRACKETED_PASTE_OFF, sizeof(BRACKETED_PASTE_OFF) - 1);
@@ -1365,27 +1359,6 @@ void editorUpdateSyntaxColors(size_t start, size_t end, uint32_t *colors, uint16
             editorApplyMatchColors(&match, start, end, colors, priorities);
 }
 
-char *editorRenderLine(const char *text, size_t len, int *rendered_len) {
-    int tabs = 0;
-    for (size_t i = 0; i < len; i++) if (text[i] == '\t') tabs++;
-
-    char *render = safeMalloc(len + tabs * (TAB_SIZE - 1) + 1);
-    int rsize = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (text[i] == '\t') {
-            render[rsize++] = ' ';
-            while (rsize % TAB_SIZE != 0) render[rsize++] = ' ';
-        } else if (is_cntrl((unsigned char)text[i])) {
-            render[rsize++] = '?';
-        } else {
-            render[rsize++] = text[i];
-        }
-    }
-    render[rsize] = '\0';
-    if (rendered_len) *rendered_len = rsize;
-    return render;
-}
-
 void editorGetNormalizedSelection(int *sy, int *sx, int *ey, int *ex) {
     if (!E.sel.active) return;
 
@@ -2040,7 +2013,6 @@ void editorJumpCallback(const char *buf, int key) {
 
 void ptInit(PieceTable *pt, const char *file_content, size_t content_len) {
     pt->orig_buf = file_content ? safeStrdup(file_content) : safeStrdup("");
-    pt->orig_len = content_len;
     pt->add_capacity = LARGE_BUFFER_SIZE;
     pt->add_buf = safeMalloc(pt->add_capacity);
     pt->add_len = 0;
@@ -2197,7 +2169,6 @@ void ptSquash(PieceTable *pt) {
     free(pt->orig_buf);
 
     pt->orig_buf = new_orig_buf;
-    pt->orig_len = pt->logical_size;
     pt->add_len = 0; 
     pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, pt->logical_size};
     pt->num_pieces = 1;
