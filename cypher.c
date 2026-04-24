@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.3"
+#define CYPHER_VERSION      "1.5.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -46,6 +46,7 @@
 #define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT_MS         1000
 #define DOUBLE_CLICK_MS         400
+#define PARSE_DEBOUNCE_MS       50
 #define STATUS_LENGTH           256
 #define SMALL_BUFFER_SIZE       32
 #define BUFFER_SIZE             128
@@ -254,6 +255,7 @@ typedef struct {
     uint32_t default_fg;
     LangMapping *lang_mappings;
     int num_lang_mappings;
+    bool needs_reparse;
 } EditorTS;
 
 typedef struct {
@@ -514,6 +516,12 @@ int main(int argc, char *argv[]) {
             needs_refresh = true;
         }
 
+        if (E.ts.needs_reparse && (currentMillis() - history.last_edit_time >= PARSE_DEBOUNCE_MS)) {
+            editorParseTreeSitter();
+            E.ts.needs_reparse = false;
+            needs_refresh = true;
+        }
+
         if (needs_refresh && !E.sel.is_pasting) {
             editorRefreshScreen();
             needs_refresh = false;
@@ -570,6 +578,7 @@ void editorInit() {
     E.ts.theme_color_count = 0;
     E.ts.lang_mappings = NULL;
     E.ts.num_lang_mappings = 0;
+    E.ts.needs_reparse = false;
 
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
     E.view.screen_rows -= UI_RESERVED_ROWS;
@@ -3435,7 +3444,7 @@ void executeInsert(size_t offset, const char *text, size_t len) {
     recordCommand(CMD_INSERT, offset, text, len, E.cursor);
     editorEditTreeSitter(offset, 0, len, text);
     ptInsert(&E.buf.pt, offset, text, len);
-    if (!E.sel.is_pasting) editorParseTreeSitter();
+    if (!E.sel.is_pasting) E.ts.needs_reparse = true;
 
     editorInsertLineOffsets(&E.buf, offset, text, len);
     E.buf.dirty = true;
@@ -3450,7 +3459,7 @@ void executeDelete(size_t offset, size_t len) {
     recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
     editorEditTreeSitter(offset, len, 0, NULL);
     ptDelete(&E.buf.pt, offset, len);
-    if (!E.sel.is_pasting) editorParseTreeSitter();
+    if (!E.sel.is_pasting) E.ts.needs_reparse = true;
 
     editorDeleteLineOffsets(&E.buf, offset, deleted_text, len);
     E.buf.dirty = true;
