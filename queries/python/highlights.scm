@@ -1,5 +1,11 @@
 (identifier) @variable
 
+((identifier) @type
+ (#match? @type "^(int|float|bool|str|list|tuple|dict|set|bytes|any)$"))
+
+((identifier) @type
+ (#match? @type "^[A-Z][a-zA-Z0-9_]*$"))
+
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
