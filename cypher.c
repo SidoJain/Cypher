@@ -1026,6 +1026,11 @@ bool editorProcessKeypress() {
             updateMatchBracket();
             break;
 
+        case CTRL_KEY('e'):     // center viewport
+            E.view.row_offset = E.cursor.y - (E.view.screen_rows / 2);
+            if (E.view.row_offset < 0) E.view.row_offset = 0;
+            break;
+
         case '\n':              // enter during bracketed paste
         case '\r':              // enter
             if (E.sel.is_pasting) E.sel.paste_len++;
@@ -1750,6 +1755,7 @@ void editorManualScreen() {
         "  Ctrl-C               - Copy selected text",
         "  Ctrl-X               - Cut selected text",
         "  Ctrl-V               - Paste from clipboard",
+        "  Ctrl-E               - Center viewport",
         "  Ctrl-H               - Show manual",
         "  Ctrl-D               - Debug Tree-Sitter Capture",
         "  Alt-Up/Down          - Move row up / down",
