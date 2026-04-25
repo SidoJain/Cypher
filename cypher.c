@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.4"
+#define CYPHER_VERSION      "1.5.5"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -122,6 +122,7 @@ typedef enum {
     ALT_ARROW_DOWN,
     ALT_SHIFT_ARROW_UP,
     ALT_SHIFT_ARROW_DOWN,
+    CTRL_SLASH,
     MOUSE_SCROLL_UP = 2000,
     MOUSE_SCROLL_DOWN,
     MOUSE_SCROLL_LEFT,
@@ -129,7 +130,7 @@ typedef enum {
     MOUSE_LEFT_CLICK,
     MOUSE_DRAG,
     MOUSE_LEFT_RELEASE,
-    PASTE_START,
+    PASTE_START = 3000,
     PASTE_END
 } EditorKey;
 
@@ -175,6 +176,12 @@ typedef struct {
     size_t piece_capacity;
     size_t logical_size;
 } PieceTable;
+
+typedef struct {
+    char *comment_str;
+    char **extensions;
+    int num_exts;
+} CommentMapping;
 
 typedef struct {
     int x;
@@ -256,6 +263,8 @@ typedef struct {
     LangMapping *lang_mappings;
     int num_lang_mappings;
     bool needs_reparse;
+    CommentMapping *comment_mappings;
+    int num_comment_mappings;
 } EditorTS;
 
 typedef struct {
@@ -391,6 +400,12 @@ void editorCopyRowDown();
 void editorInsertTab();
 void editorMoveToLineStart();
 void editorMoveToLineEnd();
+void editorLoadCommentConfig(const char *);
+const char *editorGetCommentString();
+void editorGetCommentToggleBounds(int *, int *);
+bool editorShouldUncommentBlock(int, int, const char *, size_t);
+void editorApplyCommentToggle(int, int, const char *, size_t, bool);
+void editorToggleComment();
 
 // clipboard
 void editorSelectText(int);
@@ -587,12 +602,16 @@ void editorInit() {
     getEditorDirectory(exe_dir, sizeof(exe_dir));
 
     char theme_path[PATH_MAX + BUFFER_SIZE_PADDING];
-    snprintf(theme_path, sizeof(theme_path), "%s/theme.config", exe_dir);
+    snprintf(theme_path, sizeof(theme_path), "%s/configs/theme.config", exe_dir);
     editorLoadThemeConfig(theme_path);
 
     char ts_path[PATH_MAX + BUFFER_SIZE_PADDING];
-    snprintf(ts_path, sizeof(ts_path), "%s/ts.config", exe_dir);
+    snprintf(ts_path, sizeof(ts_path), "%s/configs/ts.config", exe_dir);
     editorLoadTSConfig(ts_path);
+
+    char comment_path[PATH_MAX + BUFFER_SIZE_PADDING];
+    snprintf(comment_path, sizeof(comment_path), "%s/configs/comments.config", exe_dir);
+    editorLoadCommentConfig(comment_path);
 }
 
 void editorCleanup() {
@@ -892,6 +911,7 @@ int editorReadKey() {
 
         return ESCAPE_CHAR;
     } else {
+        if (c == 31) return CTRL_SLASH;
         return c;
     }
 }
@@ -1038,6 +1058,11 @@ bool editorProcessKeypress() {
         case CTRL_KEY('e'):     // center viewport
             E.view.row_offset = E.cursor.y - (E.view.screen_rows / 2);
             if (E.view.row_offset < 0) E.view.row_offset = 0;
+            break;
+
+        case CTRL_KEY('/'):     // auto comment
+        case CTRL_SLASH:
+            editorToggleComment();
             break;
 
         case '\n':              // enter during bracketed paste
@@ -1757,7 +1782,7 @@ void editorManualScreen() {
         "  Ctrl-Q               - Quit",
         "  Ctrl-F               - Find",
         "  Ctrl-R               - Find & Replace",
-        "  Ctrl-G / L           - Jump to line",
+        "  Ctrl-G or Ctrl-L     - Jump to line",
         "  Ctrl-A               - Select all",
         "  Ctrl-Z               - Undo last major change",
         "  Ctrl-Y               - Redo last major change",
@@ -1767,6 +1792,7 @@ void editorManualScreen() {
         "  Ctrl-E               - Center viewport",
         "  Ctrl-H               - Show manual",
         "  Ctrl-D               - Debug Tree-Sitter Capture",
+        "  Ctrl-/               - Comment line",
         "  Alt-Up/Down          - Move row up / down",
         "  Shift-Alt-Up/Down    - Copy row up / down",
         "",
@@ -2749,6 +2775,139 @@ void editorMoveToLineStart() {
 void editorMoveToLineEnd() {
     if (E.cursor.y >= E.buf.num_lines) return;
     E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
+    E.cursor.preferred_x = E.cursor.x;
+}
+
+void editorLoadCommentConfig(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) return;
+
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    while ((linelen = getline(&line, &linecap, fp)) != -1) {
+        line[strcspn(line, NEW_LINE)] = '\0';
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+
+        E.ts.comment_mappings = safeRealloc(E.ts.comment_mappings, sizeof(CommentMapping) * (E.ts.num_comment_mappings + 1));
+        CommentMapping *maping = &E.ts.comment_mappings[E.ts.num_comment_mappings++];
+        maping->comment_str = safeStrdup(line);
+        maping->num_exts = 0;
+        maping->extensions = NULL;
+
+        char *ext = strtok(eq + 1, ",");
+        while (ext) {
+            maping->extensions = safeRealloc(maping->extensions, sizeof(char*) * (maping->num_exts + 1));
+            maping->extensions[maping->num_exts++] = safeStrdup(ext);
+            ext = strtok(NULL, ",");
+        }
+    }
+    free(line);
+    fclose(fp);
+}
+
+const char *editorGetCommentString() {
+    if (!E.buf.filename) return NULL;
+    const char *ext = strrchr(E.buf.filename, '.');
+    if (!ext) return NULL;
+    ext++;
+
+    for (int i = 0; i < E.ts.num_comment_mappings; i++)
+        for (int j = 0; j < E.ts.comment_mappings[i].num_exts; j++)
+            if (strcmp(ext, E.ts.comment_mappings[i].extensions[j]) == 0)
+                return E.ts.comment_mappings[i].comment_str;
+    return NULL;
+}
+
+void editorGetCommentToggleBounds(int *start_y, int *end_y) {
+    *start_y = E.cursor.y;
+    *end_y = E.cursor.y;
+    if (E.sel.active) {
+        int sx, ex;
+        editorGetNormalizedSelection(start_y, &sx, end_y, &ex);
+        if (ex == 0 && *end_y > *start_y)
+            (*end_y)--;
+    }
+}
+
+bool editorShouldUncommentBlock(int start_y, int end_y, const char *c_str, size_t c_len) {
+    bool all_commented = true;
+    bool has_non_empty = false;
+
+    for (int y = start_y; y <= end_y; y++) {
+        size_t line_len;
+        char *line = editorGetLine(&E.buf, y, &line_len);
+        if (!line) continue;
+
+        int first_non_space = 0;
+        while ((size_t)first_non_space < line_len && (line[first_non_space] == ' ' || line[first_non_space] == '\t'))
+            first_non_space++;
+
+        if ((size_t)first_non_space < line_len) {
+            has_non_empty = true;
+            if (line_len < (size_t)first_non_space + c_len || strncmp(line + first_non_space, c_str, c_len) != 0) {
+                all_commented = false;
+            }
+        }
+        free(line);
+    }
+
+    return has_non_empty && all_commented;
+}
+
+void editorApplyCommentToggle(int start_y, int end_y, const char *c_str, size_t c_len, bool should_uncomment) {
+    for (int y = start_y; y <= end_y; y++) {
+        size_t line_len;
+        char *line = editorGetLine(&E.buf, y, &line_len);
+        if (!line) continue;
+
+        int first_non_space = 0;
+        while ((size_t)first_non_space < line_len && (line[first_non_space] == ' ' || line[first_non_space] == '\t'))
+            first_non_space++;
+
+        size_t offset = editorGetLogicalOffset(&E.buf, y, first_non_space);
+        if (should_uncomment) {
+            if (line_len >= (size_t)first_non_space + c_len && strncmp(line + first_non_space, c_str, c_len) == 0) {
+                int delete_len = c_len;
+                if (line_len >= (size_t)first_non_space + c_len + 1 && line[first_non_space + c_len] == ' ')
+                    delete_len++;
+
+                executeDelete(offset, delete_len);
+                if (y == E.cursor.y && E.cursor.x > first_non_space) {
+                    E.cursor.x -= delete_len;
+                    if (E.cursor.x < first_non_space) E.cursor.x = first_non_space;
+                }
+            }
+        } else {
+            if ((size_t)first_non_space < line_len || start_y == end_y) {
+                char insert_buf[SMALL_BUFFER_SIZE]; 
+                snprintf(insert_buf, sizeof(insert_buf), "%s ", c_str);
+
+                size_t insert_len = strlen(insert_buf);
+                executeInsert(offset, insert_buf, insert_len);
+                if (y == E.cursor.y && E.cursor.x >= first_non_space)
+                    E.cursor.x += insert_len;
+            }
+        }
+        free(line);
+    }
+}
+
+void editorToggleComment() {
+    const char *c_str = editorGetCommentString();
+    if (!c_str) return;
+
+    int start_y, end_y;
+    editorGetCommentToggleBounds(&start_y, &end_y);
+    size_t c_len = strlen(c_str);
+    bool should_uncomment = editorShouldUncommentBlock(start_y, end_y, c_str, c_len);
+
+    editorBeginMacro();
+    editorApplyCommentToggle(start_y, end_y, c_str, c_len, should_uncomment);
+    editorEndMacro();
+
     E.cursor.preferred_x = E.cursor.x;
 }
 
@@ -4240,7 +4399,7 @@ void editorLoadThemeConfig(const char *filename) {
     int capacity = SMALL_BUFFER_SIZE;
     E.ts.theme_rules = safeMalloc(sizeof(ThemeRule) * capacity);
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        line[strcspn(line, "\r\n")] = '\0';
+        line[strcspn(line, NEW_LINE)] = '\0';
         if (line[0] == '\0' || line[0] == '#') continue;
         if (strncmp(line, "default=#", 9) == 0) {
             E.ts.default_fg = strtol(line + 9, NULL, 16);
@@ -4289,7 +4448,7 @@ void editorLoadTSConfig(const char *filename) {
     int capacity = SMALL_BUFFER_SIZE;
     E.ts.lang_mappings = safeMalloc(sizeof(LangMapping) * capacity);
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        line[strcspn(line, "\r\n")] = '\0';
+        line[strcspn(line, NEW_LINE)] = '\0';
         if (line[0] == '\0' || line[0] == '#') continue;
 
         char *eq = strchr(line, '=');

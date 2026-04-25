@@ -68,11 +68,12 @@ This README file has been completely written using Cypher.
 | `Ctrl-C`                              | Copy selected text                |
 | `Ctrl-X`                              | Cut selected text                 |
 | `Ctrl-V`                              | Paste from clipboard              |
-| `Ctrl-G / L`                          | Jump to line                      |
+| `Ctrl-G or Ctrl-L`                    | Jump to line                      |
 | `Ctrl-Z`                              | Undo last major change            |
 | `Ctrl-Y`                              | Redo last major change            |
 | `Ctrl-E`                              | Center viewport                   |
 | `Ctrl-D`                              | Debug Tree-Sitter Capture         |
+| `Ctrl-/`                              | Comment line                      |
 | `Arrow Keys`                          | Move cursor                       |
 | `Home / End`                          | Move to start / end of line       |
 | `Page Up`                             | Scroll up by one screen           |
