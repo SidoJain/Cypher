@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.5"
+#define CYPHER_VERSION      "1.5.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -465,6 +465,7 @@ int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
 void getEditorDirectory(char *, size_t);
 char *expandTabs(const char *, size_t, size_t *);
+void editorTrimTrailingWhitespace();
 
 // memory
 void *safeMalloc(size_t);
@@ -3871,6 +3872,7 @@ void editorOpen(const char *filename) {
 }
 
 void editorSave() {
+    editorTrimTrailingWhitespace();
     if (!E.buf.dirty) {
         editorSetStatusMsg("No changes to save");
         return;
@@ -4184,6 +4186,44 @@ char *expandTabs(const char *input, size_t input_len, size_t *out_len) {
     if (out_len) *out_len = j;
 
     return expanded;
+}
+
+void editorTrimTrailingWhitespace() {
+    if (E.buf.num_lines == 0) return;
+
+    bool trimmed_any = false;
+    editorBeginMacro();
+    for (int y = E.buf.num_lines - 1; y >= 0; y--) {
+        size_t line_len;
+        char *line_text = editorGetLine(&E.buf, y, &line_len);
+        if (!line_text || line_len == 0) {
+            if (line_text) free(line_text);
+            continue;
+        }
+
+        int trailing_spaces = 0;
+        for (int i = line_len - 1; i >= 0; i--) {
+            if (line_text[i] == ' ' || line_text[i] == '\t')
+                trailing_spaces++;
+            else
+                break;
+        }
+
+        if (trailing_spaces > 0) {
+            size_t offset = editorGetLogicalOffset(&E.buf, y, line_len - trailing_spaces);
+            executeDelete(offset, trailing_spaces);
+            trimmed_any = true;
+            if (E.cursor.y == y && E.cursor.x > (int)(line_len - trailing_spaces)) {
+                E.cursor.x = line_len - trailing_spaces;
+                E.cursor.preferred_x = E.cursor.x;
+            }
+        }
+        free(line_text);
+    }
+
+    editorEndMacro();
+    if (trimmed_any)
+        editorParseTreeSitter();
 }
 
 void *safeMalloc(size_t size) {
