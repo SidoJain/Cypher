@@ -449,7 +449,7 @@ void editorMouseDragClick();
 void editorMouseLeftRelease();
 
 // file i/o
-void editorReadFromPipe(int);
+void editorReadFromPipe(int, const char *);
 void editorOpen(const char *);
 void editorSave();
 void editorHandleCrash(int);
@@ -521,7 +521,8 @@ int main(int argc, char *argv[]) {
 
     editorInit();
     if (pipe_fd != -1) {
-        editorReadFromPipe(pipe_fd);
+        const char *filename = (argc >= 2 && strcmp(argv[1], "-") != 0) ? argv[1] : NULL;
+        editorReadFromPipe(pipe_fd, filename);
         close(pipe_fd);
     } else if (argc >= 2 && strcmp(argv[1], "-") != 0) {
         editorOpen(argv[1]);
@@ -3847,8 +3848,12 @@ void editorMouseLeftRelease() {
         E.sel.active = false;
 }
 
-void editorReadFromPipe(int fd) {
-    E.buf.filename = NULL;
+void editorReadFromPipe(int fd, const char *filename) {
+    if (filename)
+        E.buf.filename = safeStrdup(filename);
+    else
+        E.buf.filename = NULL;
+
     size_t capacity = LARGE_BUFFER_SIZE;
     char *buffer = safeMalloc(capacity);
     size_t len = 0;
