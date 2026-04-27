@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.5.6"
+#define CYPHER_VERSION      "1.6.0"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -449,9 +449,10 @@ void editorMouseDragClick();
 void editorMouseLeftRelease();
 
 // file i/o
+void editorReadFromPipe(int);
 void editorOpen(const char *);
 void editorSave();
-void panicSave(int);
+void editorHandleCrash(int);
 
 // utility
 bool isWordChar(int);
@@ -492,6 +493,18 @@ void editorDebugSyntaxUnderCursor();
 /*** Main ***/
 
 int main(int argc, char *argv[]) {
+    int pipe_fd = -1;
+    if (!isatty(STDIN_FILENO)) {
+        pipe_fd = dup(STDIN_FILENO);
+        int tty_fd = open("/dev/tty", O_RDONLY);
+        if (tty_fd != -1) {
+            dup2(tty_fd, STDIN_FILENO);
+            close(tty_fd);
+        } else {
+            fprintf(stderr, "cypher: could not reopen /dev/tty\n");
+            exit(1);
+        }
+    }
     enableRawMode();
 
     struct sigaction sa;
@@ -500,16 +513,19 @@ int main(int argc, char *argv[]) {
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, NULL);
 
-    signal(SIGSEGV, panicSave); // catch segfaults
-    signal(SIGABRT, panicSave); // catch aborts
-    signal(SIGHUP, panicSave);  // catch terminal close / ssh drop
-    signal(SIGTERM, panicSave); // catch os shutdown / kill command
+    signal(SIGSEGV, editorHandleCrash); // catch segfaults
+    signal(SIGABRT, editorHandleCrash); // catch aborts
+    signal(SIGHUP, editorHandleCrash);  // catch terminal close / ssh drop
+    signal(SIGTERM, editorHandleCrash); // catch os shutdown / kill command
     signal(SIGPIPE, SIG_IGN);
 
     editorInit();
-    if (argc >= 2)
+    if (pipe_fd != -1) {
+        editorReadFromPipe(pipe_fd);
+        close(pipe_fd);
+    } else if (argc >= 2 && strcmp(argv[1], "-") != 0) {
         editorOpen(argv[1]);
-    else {
+    } else {
         ptInit(&E.buf.pt, "", 0);
         editorUpdateLineOffsets(&E.buf);
     }
@@ -697,7 +713,7 @@ void editorQuit() {
 void die(const char *str) {
     write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
     perror(str);
-    panicSave(SIGTERM);
+    editorHandleCrash(SIGTERM);
     exit(1);
 }
 
@@ -3831,6 +3847,36 @@ void editorMouseLeftRelease() {
         E.sel.active = false;
 }
 
+void editorReadFromPipe(int fd) {
+    E.buf.filename = NULL;
+    size_t capacity = LARGE_BUFFER_SIZE;
+    char *buffer = safeMalloc(capacity);
+    size_t len = 0;
+
+    ssize_t nread;
+    char temp[LARGE_BUFFER_SIZE];
+    while ((nread = read(fd, temp, sizeof(temp))) > 0) {
+        if (len + nread + 1 > capacity) {
+            capacity = (len + nread) * 2;
+            buffer = safeRealloc(buffer, capacity);
+        }
+        memcpy(buffer + len, temp, nread);
+        len += nread;
+    }
+    buffer[len] = '\0';
+
+    size_t expanded_len;
+    char *expanded_buffer = expandTabs(buffer, len, &expanded_len);
+
+    ptInit(&E.buf.pt, expanded_buffer, expanded_len);
+    free(expanded_buffer);
+    free(buffer);
+    editorUpdateLineOffsets(&E.buf);
+
+    E.buf.dirty = true; 
+    history.save_point = -1;
+}
+
 void editorOpen(const char *filename) {
     free(E.buf.filename);
     E.buf.filename = safeStrdup(filename);
@@ -3978,7 +4024,7 @@ void editorSave() {
     free(tmp_filename);
 }
 
-void panicSave(int signum) {
+void editorHandleCrash(int signum) {
     if (E.buf.dirty && E.buf.pt.pieces) {
         char path[PATH_MAX];
         size_t i = 0;
