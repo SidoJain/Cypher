@@ -460,7 +460,7 @@ long currentMillis();
 char getClosingChar(char);
 void clampCursorPosition();
 void humanReadableSize(size_t, char *, size_t);
-void base64_encode(const char *, int, char *);
+void base64Encode(const char *, int, char *);
 int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
@@ -1519,8 +1519,8 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
         if (text[i] == '%') {
             size_t j = i + 1;
             if (text[j] == '%') {
-                i++; 
-                continue; 
+                i++;
+                continue;
             }
 
             while (j < byte_count && (text[j] == '-' || text[j] == '+' || text[j] == ' ' || text[j] == '#' || text[j] == '0' || text[j] == '.' || text[j] == '*' || (text[j] >= '0' && text[j] <= '9')))
@@ -1990,7 +1990,7 @@ void editorScrollHorizontal(ScrollDirection direction) {
     if (direction == LEFT) {
         E.view.col_offset -= scroll_amount;
         if (E.view.col_offset < 0) E.view.col_offset = 0;
-    } else { 
+    } else {
         int max_rx = 0;
         int start_row = E.view.row_offset;
         int end_row = start_row + E.view.screen_rows;
@@ -2006,7 +2006,7 @@ void editorScrollHorizontal(ScrollDirection direction) {
             }
         }
 
-        int max_col_offset = max_rx - MARGIN; 
+        int max_col_offset = max_rx - MARGIN;
         if (max_col_offset < 0) max_col_offset = 0;
 
         E.view.col_offset += scroll_amount;
@@ -2228,7 +2228,7 @@ void ptSquash(PieceTable *pt) {
     free(pt->orig_buf);
 
     pt->orig_buf = new_orig_buf;
-    pt->add_len = 0; 
+    pt->add_len = 0;
     pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, pt->logical_size};
     pt->num_pieces = 1;
 }
@@ -2900,7 +2900,7 @@ void editorApplyCommentToggle(int start_y, int end_y, const char *c_str, size_t 
             }
         } else {
             if ((size_t)first_non_space < line_len || start_y == end_y) {
-                char insert_buf[SMALL_BUFFER_SIZE]; 
+                char insert_buf[SMALL_BUFFER_SIZE];
                 snprintf(insert_buf, sizeof(insert_buf), "%s ", c_str);
 
                 size_t insert_len = strlen(insert_buf);
@@ -3135,7 +3135,7 @@ void clipboardCopyToSystem(const char *data, int len) {
 
     size_t output_len = 4 * ((len + 2) / 3);        // Fallback - OSC 52
     char *b64_data = safeMalloc(output_len + 1);
-    base64_encode(data, len, b64_data);
+    base64Encode(data, len, b64_data);
 
     char header[] = "\033]52;c;";
     char footer[] = "\007";
@@ -3878,7 +3878,7 @@ void editorReadFromPipe(int fd, const char *filename) {
     free(buffer);
     editorUpdateLineOffsets(&E.buf);
 
-    E.buf.dirty = true; 
+    E.buf.dirty = true;
     history.save_point = -1;
 }
 
@@ -4114,7 +4114,7 @@ void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
     snprintf(buf, bufsize, "%.1f %s", size, units[unit]);
 }
 
-void base64_encode(const char *src, int len, char *out) {
+void base64Encode(const char *src, int len, char *out) {
     int i, j;
     for (i = 0, j = 0; i < len; i += 3, j += 4) {
         int v = src[i];
