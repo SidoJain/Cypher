@@ -82,6 +82,8 @@
 #define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 #define ANSI_RGB_FMT            "\x1b[38;2;%d;%d;%dm"
+#define OSC52_HEADER            "\033]52;c;"
+#define OSC52_FOOTER            "\007"
 
 #define DEFAULT_FG_COLOR_HEX    0xFFFFFFFF
 #define SELECTION_COLOR_HEX     0xD4D4D4
@@ -423,9 +425,9 @@ void editorFind();
 void editorFindCallback(const char *, int);
 void editorReplace();
 void editorReplaceCallback(const char *, int);
+bool editorReplaceCurrent(const char *, const char *);
 int editorReplaceAll(const char *);
 void editorCenterViewOnMatch();
-bool editorReplaceCurrent(const char *, const char *);
 
 // undo-redo
 void freeEditCommand(EditCommand *);
@@ -1419,8 +1421,10 @@ void editorUpdateSyntaxColors(size_t start, size_t end, uint32_t *colors, uint16
 void editorGetNormalizedSelection(int *sy, int *sx, int *ey, int *ex) {
     if (!E.sel.active) return;
 
-    *sy = E.sel.sy; *sx = E.sel.sx;
-    *ey = E.sel.ey; *ex = E.sel.ex;
+    *sy = E.sel.sy;
+    *sx = E.sel.sx;
+    *ey = E.sel.ey;
+    *ex = E.sel.ex;
     if (*sy > *ey || (*sy == *ey && *sx > *ex)) {
         int tmpx = *sx;
         int tmpy = *sy;
@@ -1486,9 +1490,12 @@ bool editorIsCharInBracket(int file_row, int cx) {
     int ey = E.sys.bracket_y;
     int ex = E.sys.bracket_x;
     if (sy > ey || (sy == ey && sx > ex)) {
-        int tmpx = sx;  int tmpy = sy;
-        sx = ex;        sy = ey;
-        ex = tmpx;      ey = tmpy;
+        int tmpx = sx;
+        int tmpy = sy;
+        sx = ex;
+        sy = ey;
+        ex = tmpx;
+        ey = tmpy;
     }
 
     if (file_row > sy && file_row < ey) return true;
@@ -3137,12 +3144,9 @@ void clipboardCopyToSystem(const char *data, int len) {
     char *b64_data = safeMalloc(output_len + 1);
     base64Encode(data, len, b64_data);
 
-    char header[] = "\033]52;c;";
-    char footer[] = "\007";
-
-    if (write(STDOUT_FILENO, header, sizeof(header) - 1) == -1) {}
+    if (write(STDOUT_FILENO, OSC52_HEADER, sizeof(OSC52_HEADER) - 1) == -1) {}
     if (write(STDOUT_FILENO, b64_data, output_len) == -1) {}
-    if (write(STDOUT_FILENO, footer, sizeof(footer) - 1) == -1) {}
+    if (write(STDOUT_FILENO, OSC52_FOOTER, sizeof(OSC52_FOOTER) - 1) == -1) {}
 
     free(b64_data);
 }
@@ -3232,7 +3236,6 @@ void editorFind() {
     int saved_row_offset = E.view.row_offset;
 
     char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback, editorGetSelectedText(NULL));
-
     if (query) free(query);
     else {
         E.cursor.x = saved_cursor_x;
@@ -3450,6 +3453,28 @@ void editorReplaceCallback(const char *query, int key) {
     }
 }
 
+bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
+    if (!find_str || !replace_str || E.find.num_matches == 0 || E.find.current_idx < 0) return false;
+
+    int row = E.find.match_lines[E.find.current_idx];
+    int col = E.find.match_cols[E.find.current_idx];
+    size_t offset = editorGetLogicalOffset(&E.buf, row, col);
+
+    int find_len = strlen(find_str);
+    int replace_len = strlen(replace_str);
+
+    editorBeginMacro();
+    executeDelete(offset, find_len);
+    executeInsert(offset, replace_str, replace_len);
+    editorEndMacro();
+
+    E.buf.dirty = true;
+    E.cursor.y = row;
+    E.cursor.x = col + replace_len;
+    E.cursor.preferred_x = E.cursor.x;
+    return true;
+}
+
 int editorReplaceAll(const char *replace_str) {
     if (!E.find.query || !replace_str) return 0;
     int replaced_count = 0;
@@ -3480,49 +3505,24 @@ void editorCenterViewOnMatch() {
         E.cursor.x = col;
         E.cursor.y = row;
         E.cursor.preferred_x = E.cursor.x;
-
-        if (row < E.view.row_offset) {
-            E.view.row_offset = row;
-        } else if (row >= E.view.row_offset + E.view.screen_rows) {
-            E.view.row_offset = row - E.view.screen_rows + MARGIN;
+        if (row < E.view.row_offset || row >= E.view.row_offset + E.view.screen_rows) {
+            E.view.row_offset = row - (E.view.screen_rows / 2);
+            if (E.view.row_offset < 0)
+                E.view.row_offset = 0;
         }
 
         size_t render_line_len;
         char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
         int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
-        if (render_line_text) free(render_line_text);
+        if (render_line_text)
+            free(render_line_text);
 
-        int margin = E.find.query ? strlen(E.find.query) + MARGIN : MARGIN;
-        if (render_pos < E.view.col_offset) {
-            E.view.col_offset = render_pos;
-        } else if (render_pos >= E.view.col_offset + E.view.screen_cols - 1 && render_pos > margin) {
-            E.view.col_offset = render_pos - (E.view.screen_cols - margin);
+        if (render_pos < E.view.col_offset || render_pos >= E.view.col_offset + E.view.screen_cols) {
+            E.view.col_offset = render_pos - (E.view.screen_cols / 2);
+            if (E.view.col_offset < 0)
+                E.view.col_offset = 0;
         }
-
-        if (E.view.col_offset < 0) E.view.col_offset = 0;
     }
-}
-
-bool editorReplaceCurrent(const char *find_str, const char *replace_str) {
-    if (!find_str || !replace_str || E.find.num_matches == 0 || E.find.current_idx < 0) return false;
-
-    int row = E.find.match_lines[E.find.current_idx];
-    int col = E.find.match_cols[E.find.current_idx];
-    size_t offset = editorGetLogicalOffset(&E.buf, row, col);
-
-    int find_len = strlen(find_str);
-    int replace_len = strlen(replace_str);
-
-    editorBeginMacro();
-    executeDelete(offset, find_len);
-    executeInsert(offset, replace_str, replace_len);
-    editorEndMacro();
-
-    E.buf.dirty = true;
-    E.cursor.y = row;
-    E.cursor.x = col + replace_len;
-    E.cursor.preferred_x = E.cursor.x;
-    return true;
 }
 
 void freeEditCommand(EditCommand *cmd) {
@@ -4014,11 +4014,26 @@ void editorSave() {
             editorSetStatusMsg(msg);
 
             if (saved_as_new_file) {
-                if (E.ts.query_cursor) { ts_query_cursor_delete(E.ts.query_cursor); E.ts.query_cursor = NULL; }
-                if (E.ts.query) { ts_query_delete(E.ts.query); E.ts.query = NULL; }
-                if (E.ts.tree) { ts_tree_delete(E.ts.tree); E.ts.tree = NULL; }
-                if (E.ts.parser) { ts_parser_delete(E.ts.parser); E.ts.parser = NULL; }
-                if (E.ts.language_lib) { dlclose(E.ts.language_lib); E.ts.language_lib = NULL; }
+                if (E.ts.query_cursor) {
+                    ts_query_cursor_delete(E.ts.query_cursor);
+                    E.ts.query_cursor = NULL;
+                }
+                if (E.ts.query) {
+                    ts_query_delete(E.ts.query);
+                    E.ts.query = NULL;
+                }
+                if (E.ts.tree) {
+                    ts_tree_delete(E.ts.tree);
+                    E.ts.tree = NULL;
+                }
+                if (E.ts.parser) {
+                    ts_parser_delete(E.ts.parser);
+                    E.ts.parser = NULL;
+                }
+                if (E.ts.language_lib) {
+                    dlclose(E.ts.language_lib);
+                    E.ts.language_lib = NULL;
+                }
                 editorInitTreeSitter();
             }
         }
