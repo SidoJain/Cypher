@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.0"
+#define CYPHER_VERSION      "1.6.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -48,9 +48,10 @@
 #define DOUBLE_CLICK_MS         400
 #define PARSE_DEBOUNCE_MS       50
 #define STATUS_LENGTH           256
-#define SMALL_BUFFER_SIZE       32
-#define BUFFER_SIZE             128
-#define LARGE_BUFFER_SIZE       1024
+#define BUFFER_SIZE_32          32
+#define BUFFER_SIZE_128         128
+#define BUFFER_SIZE_1024        1024
+#define BUFFER_SIZE_4096        4096
 #define BUFFER_SIZE_PADDING     64
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
@@ -220,6 +221,8 @@ typedef struct {
     char *clipboard;
     bool is_pasting;
     int paste_len;
+    size_t paste_capacity;
+    char *paste_buf;
 } EditorSelection;
 
 typedef struct {
@@ -238,6 +241,8 @@ typedef struct {
     int bracket_x;
     int bracket_y;
     bool has_bracket;
+    char *clipboard_cmd;
+    bool use_osc52;
 } EditorSystem;
 
 typedef struct {
@@ -336,6 +341,7 @@ int getWindowSize(int *, int *);
 int getCursorPosition(int *, int *);
 
 // input parsing
+int editorReadByte(char *);
 int editorReadKey();
 void editorProcessStandardKey(int);
 bool editorProcessKeypress();
@@ -467,6 +473,7 @@ int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
 void getEditorDirectory(char *, size_t);
+void getEditorClipboardCmd();
 char *expandTabs(const char *, size_t, size_t *);
 void editorTrimTrailingWhitespace();
 
@@ -593,6 +600,8 @@ void editorInit() {
     E.sel.clipboard = NULL;
     E.sel.is_pasting = false;
     E.sel.paste_len = 0;
+    E.sel.paste_capacity = 0;
+    E.sel.paste_buf = NULL;
     E.find.active = false;
     E.find.query = NULL;
     E.find.match_lines = NULL;
@@ -604,6 +613,8 @@ void editorInit() {
     E.sys.bracket_x = 0;
     E.sys.bracket_y = 0;
     E.sys.has_bracket = false;
+    E.sys.use_osc52 = true;
+    E.sys.clipboard_cmd = NULL;
     E.ts.parser = NULL;
     E.ts.tree = NULL;
     E.ts.query = NULL;
@@ -614,6 +625,8 @@ void editorInit() {
     E.ts.lang_mappings = NULL;
     E.ts.num_lang_mappings = 0;
     E.ts.needs_reparse = false;
+
+    getEditorClipboardCmd();
 
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
     E.view.screen_rows -= UI_RESERVED_ROWS;
@@ -635,16 +648,19 @@ void editorInit() {
 }
 
 void editorCleanup() {
+    E.sys.clipboard_cmd = NULL;
+
     ptFree(&E.buf.pt);
     free(E.buf.line_offsets);
-    E.buf.line_offsets = NULL;
-    E.buf.num_lines = 0;
-
     free(E.buf.filename);
+    E.buf.num_lines = 0;
+    E.buf.line_offsets = NULL;
     E.buf.filename = NULL;
 
     free(E.sel.clipboard);
+    free(E.sel.paste_buf);
     E.sel.clipboard = NULL;
+    E.sel.paste_buf = NULL;
 
     free(E.find.query);
     free(E.find.match_lines);
@@ -708,7 +724,6 @@ void editorQuit() {
         E.buf.quit_times--;
         return;
     }
-    write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1);
     clearTerminal();
     exit(0);
 }
@@ -750,7 +765,7 @@ void disableRawMode() {
 }
 
 void clearTerminal() {
-    if (write(STDOUT_FILENO, CLEAR_SCREEN  CURSOR_RESET, sizeof(CLEAR_SCREEN  CURSOR_RESET)) == -1) {}
+    if (write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1) == -1) {}
 }
 
 void handleSigWinCh(int sig) {
@@ -761,7 +776,6 @@ void handleSigWinCh(int sig) {
 int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
 
-    // fallback for calculating window size
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
         if (write(STDOUT_FILENO, CURSOR_FORWARD CURSOR_DOWN, sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) != sizeof(CURSOR_FORWARD CURSOR_DOWN) - 1) return -1;
         return getCursorPosition(rows, cols);
@@ -773,12 +787,12 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 int getCursorPosition(int *rows, int *cols) {
-    char buf[SMALL_BUFFER_SIZE];
+    char buf[BUFFER_SIZE_32];
     unsigned int i = 0;
     if (write(STDOUT_FILENO, QUERY_CURSOR_POSITION, sizeof(QUERY_CURSOR_POSITION) - 1) != sizeof(QUERY_CURSOR_POSITION) - 1) return -1;
 
     while (i < sizeof(buf) - 1) {
-        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (editorReadByte(&buf[i]) != 1) break;
         if (buf[i] == 'R') break;
         i++;
     }
@@ -789,26 +803,38 @@ int getCursorPosition(int *rows, int *cols) {
     return 0;
 }
 
-int editorReadKey() {
-    int nread;
-    char c;
-    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-        if (nread == -1 && errno == EAGAIN) continue;
-        if (nread == -1 && errno == EINTR) return 0;
-        if (nread == 0) return 0;
-        die("read");
+int editorReadByte(char *c) {
+    static char read_buf[BUFFER_SIZE_4096];
+    static ssize_t buf_len = 0;
+    static ssize_t buf_pos = 0;
+    if (buf_pos >= buf_len) {
+        buf_pos = 0;
+        while ((buf_len = read(STDIN_FILENO, read_buf, sizeof(read_buf))) <= 0) {
+            if (buf_len == -1 && errno == EAGAIN) continue;
+            if (buf_len == -1 && errno == EINTR) return 0;
+            if (buf_len == 0) return 0;
+            die("read");
+        }
     }
 
+    *c = read_buf[buf_pos++];
+    return 1;
+}
+
+int editorReadKey() {
+    char c;
+    if (editorReadByte(&c) != 1) return 0;
+
     if (c == ESCAPE_CHAR) {
-        char seq[SMALL_BUFFER_SIZE] = {0};
-        if (read(STDIN_FILENO, &seq[0], 1) != 1) return ESCAPE_CHAR;
-        if (read(STDIN_FILENO, &seq[1], 1) != 1) return ESCAPE_CHAR;
+        char seq[BUFFER_SIZE_32] = {0};
+        if (editorReadByte(&seq[0]) != 1) return ESCAPE_CHAR;
+        if (editorReadByte(&seq[1]) != 1) return ESCAPE_CHAR;
 
         if (seq[0] == '[') {
             if (seq[1] == '<') {
                 int i = 2;
                 while (true) {
-                    if (read(STDIN_FILENO, &seq[i], 1) != 1) return ESCAPE_CHAR;
+                    if (editorReadByte(&seq[i]) != 1) return ESCAPE_CHAR;
                     if (seq[i] == 'm' || seq[i] == 'M') break;
                     i++;
                     if (i >= (int)sizeof(seq) - 1) return ESCAPE_CHAR;
@@ -835,19 +861,19 @@ int editorReadKey() {
                 }
                 return ESCAPE_CHAR;
             } else if (seq[1] >= '0' && seq[1] <= '9') {
-                if (read(STDIN_FILENO, &seq[2], 1) != 1) return ESCAPE_CHAR;
+                if (editorReadByte(&seq[2]) != 1) return ESCAPE_CHAR;
                 if (seq[2] == '0' || seq[2] == '1') {
                     char seq3, seq4;
-                    if (read(STDIN_FILENO, &seq3, 1) == 1 && (seq3 == '0' || seq3 == '1')) {
-                        if (read(STDIN_FILENO, &seq4, 1) == 1 && seq4 == '~') {
+                    if (editorReadByte(&seq3) == 1 && (seq3 == '0' || seq3 == '1')) {
+                        if (editorReadByte(&seq4) == 1 && seq4 == '~') {
                             if (seq[1] == '2' && seq[2] == '0' && seq3 == '0') return PASTE_START;
                             if (seq[1] == '2' && seq[2] == '0' && seq3 == '1') return PASTE_END;
                         }
                     }
                 }
                 if (seq[2] == ';') {
-                    if (read(STDIN_FILENO, &seq[3], 1) != 1) return ESCAPE_CHAR;
-                    if (read(STDIN_FILENO, &seq[4], 1) != 1) return ESCAPE_CHAR;
+                    if (editorReadByte(&seq[3]) != 1) return ESCAPE_CHAR;
+                    if (editorReadByte(&seq[4]) != 1) return ESCAPE_CHAR;
                     if (seq[3] == '6') {
                         switch (seq[4]) {
                             case 'C': return CTRL_SHIFT_ARROW_RIGHT;
@@ -905,9 +931,9 @@ int editorReadKey() {
                     case 'F': return END_KEY;
                     case 'M': {
                         char cb, cx, cy;
-                        if (read(STDIN_FILENO, &cb, 1) != 1) return ESCAPE_CHAR;
-                        if (read(STDIN_FILENO, &cx, 1) != 1) return ESCAPE_CHAR;
-                        if (read(STDIN_FILENO, &cy, 1) != 1) return ESCAPE_CHAR;
+                        if (editorReadByte(&cb) != 1) return ESCAPE_CHAR;
+                        if (editorReadByte(&cx) != 1) return ESCAPE_CHAR;
+                        if (editorReadByte(&cy) != 1) return ESCAPE_CHAR;
 
                         int button = cb - ' ';
                         if (button == 64) return MOUSE_SCROLL_UP;
@@ -995,6 +1021,18 @@ bool editorProcessKeypress() {
     if (ch != CTRL_KEY('q'))
         E.buf.quit_times = QUIT_TIMES;
 
+    if (E.sel.is_pasting && ch != PASTE_END) {
+        if (ch == '\r') ch = '\n';
+
+        if ((size_t)E.sel.paste_len + 1 >= E.sel.paste_capacity) {
+            E.sel.paste_capacity = E.sel.paste_capacity == 0 ? BUFFER_SIZE_1024 : E.sel.paste_capacity * 2;
+            E.sel.paste_buf = safeRealloc(E.sel.paste_buf, E.sel.paste_capacity);
+        }
+
+        E.sel.paste_buf[E.sel.paste_len++] = ch;
+        return true;
+    }
+
     switch (ch) {
         case CTRL_KEY('d'):     // debug tree-sitter
             editorDebugSyntaxUnderCursor();
@@ -1040,13 +1078,28 @@ bool editorProcessKeypress() {
             break;
         case PASTE_END:
             E.sel.is_pasting = false;
-            editorEndMacro();
+            if (E.sel.paste_len > 0) {
+                if (E.sel.active) editorDeleteSelectedText();
 
+                size_t offset = editorGetLogicalOffset(&E.buf, E.cursor.y, E.cursor.x);
+                executeInsert(offset, E.sel.paste_buf, E.sel.paste_len);
+                for (int i = 0; i < E.sel.paste_len; i++) {
+                    if (E.sel.paste_buf[i] == '\n') {
+                        E.cursor.y++;
+                        E.cursor.x = 0;
+                    } else {
+                        E.cursor.x++;
+                    }
+                }
+                E.cursor.preferred_x = E.cursor.x;
+            }
+
+            editorEndMacro();
             editorParseTreeSitter();
             updateMatchBracket();
 
             {
-                char sizebuf[SMALL_BUFFER_SIZE];
+                char sizebuf[BUFFER_SIZE_32];
                 humanReadableSize(E.sel.paste_len, sizebuf, sizeof(sizebuf));
                 char msg[STATUS_LENGTH];
                 snprintf(msg, sizeof(msg), "Pasted %s", sizebuf);
@@ -1265,7 +1318,7 @@ bool editorProcessKeypress() {
 }
 
 char *editorPrompt(char *prompt, void (*callback)(const char *, int), char *initial) {
-    size_t buf_size = BUFFER_SIZE;
+    size_t buf_size = BUFFER_SIZE_128;
     char *buf = safeMalloc(buf_size);
 
     size_t buf_len = 0;
@@ -1632,7 +1685,7 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
         }
 
         if (color != current_fg) {
-            char clr[SMALL_BUFFER_SIZE];
+            char clr[BUFFER_SIZE_32];
             snprintf(clr, sizeof(clr), ANSI_RGB_FMT, RGB_RED(color), RGB_GREEN(color), RGB_BLUE(color));
             abAppend(ab, clr, strlen(clr));
             current_fg = color;
@@ -1659,7 +1712,7 @@ void editorRefreshScreen() {
     int draw_y = (E.cursor.y - E.view.row_offset) + 1;
     int draw_x = (E.cursor.render_x - E.view.col_offset) + 1;
     if (draw_y >= 1 && draw_y <= E.view.screen_rows && draw_x >= 1 && draw_x <= E.view.screen_cols) {
-        char buf[SMALL_BUFFER_SIZE];
+        char buf[BUFFER_SIZE_32];
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH", draw_y, draw_x);
         abAppend(&ab, buf, strlen(buf));
         abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
@@ -1708,7 +1761,7 @@ void editorSetStatusMsg(const char *msg) {
 
 void editorDrawStatusBar(AppendBuffer *ab) {
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
-    char status[LARGE_BUFFER_SIZE], rstatus[STATUS_LENGTH], lsuffix[STATUS_LENGTH];
+    char status[BUFFER_SIZE_1024], rstatus[STATUS_LENGTH], lsuffix[STATUS_LENGTH];
 
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cursor.y + 1, E.cursor.x + 1);
     int lsuffix_len = snprintf(lsuffix, sizeof(lsuffix), " - %d lines %s", E.buf.num_lines, E.buf.dirty ? "(modified)" : "");
@@ -1716,7 +1769,7 @@ void editorDrawStatusBar(AppendBuffer *ab) {
     if (max_name_len < MIN_FILENAME_LEN) max_name_len = MIN_FILENAME_LEN;
 
     const char *display_name = E.buf.filename ? E.buf.filename : "[No Name]";
-    char truncated_name[LARGE_BUFFER_SIZE];
+    char truncated_name[BUFFER_SIZE_1024];
     if (E.buf.filename) {
         int name_len = strlen(E.buf.filename);
         if (name_len > max_name_len) {
@@ -1747,7 +1800,7 @@ void editorDrawMsgBar(AppendBuffer *ab) {
     const char *lang_name = editorGetLanguageName(E.buf.filename);
     const char *display_lang = lang_name ? lang_name : "";
 
-    char right_buf[SMALL_BUFFER_SIZE];
+    char right_buf[BUFFER_SIZE_32];
     int right_len;
     if (E.find.active)
         right_len = snprintf(right_buf, sizeof(right_buf), "%d/%d | %s", E.find.current_idx + 1, E.find.num_matches, display_lang);
@@ -1827,7 +1880,7 @@ void editorManualScreen() {
     int lines = sizeof(text) / sizeof(text[0]);
     int row = 1;
     for (int i = 0; i < lines; i++) {
-        char buf[BUFFER_SIZE];
+        char buf[BUFFER_SIZE_128];
         int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H%s", row++, text[i]);
         write(STDOUT_FILENO, buf, len);
     }
@@ -2079,10 +2132,10 @@ void editorJumpCallback(const char *buf, int key) {
 
 void ptInit(PieceTable *pt, const char *file_content, size_t content_len) {
     pt->orig_buf = file_content ? safeStrdup(file_content) : safeStrdup("");
-    pt->add_capacity = LARGE_BUFFER_SIZE;
+    pt->add_capacity = BUFFER_SIZE_1024;
     pt->add_buf = safeMalloc(pt->add_capacity);
     pt->add_len = 0;
-    pt->piece_capacity = BUFFER_SIZE;
+    pt->piece_capacity = BUFFER_SIZE_128;
     pt->pieces = safeMalloc(sizeof(Piece) * pt->piece_capacity);
 
     if (content_len > 0) {
@@ -2299,7 +2352,7 @@ char ptCharAt(PieceTable *pt, size_t logical_pos) {
 
 void editorUpdateLineOffsets(EditorBuffer *buf) {
     if (buf->line_capacity == 0) {
-        buf->line_capacity = LARGE_BUFFER_SIZE;
+        buf->line_capacity = BUFFER_SIZE_1024;
         buf->line_offsets = safeMalloc(sizeof(size_t) * buf->line_capacity);
     }
 
@@ -2430,7 +2483,7 @@ void editorInsertLineOffsets(EditorBuffer *buf, size_t offset, const char *text,
     else {
         if (buf->num_lines + newlines >= buf->line_capacity) {
             while (buf->num_lines + newlines >= buf->line_capacity)
-                buf->line_capacity = buf->line_capacity == 0 ? LARGE_BUFFER_SIZE : buf->line_capacity * 2;
+                buf->line_capacity = buf->line_capacity == 0 ? BUFFER_SIZE_1024 : buf->line_capacity * 2;
             buf->line_offsets = safeRealloc(buf->line_offsets, sizeof(size_t) * buf->line_capacity);
         }
 
@@ -2907,7 +2960,7 @@ void editorApplyCommentToggle(int start_y, int end_y, const char *c_str, size_t 
             }
         } else {
             if ((size_t)first_non_space < line_len || start_y == end_y) {
-                char insert_buf[SMALL_BUFFER_SIZE];
+                char insert_buf[BUFFER_SIZE_32];
                 snprintf(insert_buf, sizeof(insert_buf), "%s ", c_str);
 
                 size_t insert_len = strlen(insert_buf);
@@ -3030,7 +3083,7 @@ void editorCopySelection() {
     E.sel.clipboard = editorGetSelectedText(&len);
 
     if (E.sel.clipboard) {
-        char sizebuf[SMALL_BUFFER_SIZE];
+        char sizebuf[BUFFER_SIZE_32];
         humanReadableSize(len, sizebuf, sizeof(sizebuf));
 
         char msg[STATUS_LENGTH];
@@ -3054,7 +3107,7 @@ void editorCutSelection() {
     clipboardCopyToSystem(E.sel.clipboard, len);
     editorDeleteSelectedText();
 
-    char sizebuf[SMALL_BUFFER_SIZE];
+    char sizebuf[BUFFER_SIZE_32];
     humanReadableSize(strlen(E.sel.clipboard), sizebuf, sizeof(sizebuf));
 
     char msg[STATUS_LENGTH];
@@ -3087,7 +3140,7 @@ void editorCutLine() {
     E.cursor.preferred_x = E.cursor.x;
 
     E.buf.dirty = true;
-    char sizebuf[SMALL_BUFFER_SIZE];
+    char sizebuf[BUFFER_SIZE_32];
     humanReadableSize(delete_len, sizebuf, sizeof(sizebuf));
     char msg[STATUS_LENGTH];
     snprintf(msg, sizeof(msg), "Cut %s", sizebuf);
@@ -3095,60 +3148,32 @@ void editorCutLine() {
 }
 
 void clipboardCopyToSystem(const char *data, int len) {
-    if (!data || len <= 0)
-        return;
+    if (!data || len <= 0) return;
 
-    #ifdef __APPLE__                                 // MacOS
-        if (getenv("SSH_TTY") == NULL) {
-            FILE *pipe = popen("pbcopy 2>/dev/null", "w");
-            if (pipe != NULL) {
-                fwrite(data, 1, len, pipe);
-                pclose(pipe);
-                return;
-            }
+    if (E.sys.use_osc52) {
+        size_t output_len = 4 * ((len + 2) / 3);
+        char *b64_data = safeMalloc(output_len + 1);
+        base64Encode(data, len, b64_data);
+        if (write(STDOUT_FILENO, OSC52_HEADER, sizeof(OSC52_HEADER) - 1) != -1 &&
+            write(STDOUT_FILENO, b64_data, output_len) != -1 &&
+            write(STDOUT_FILENO, OSC52_FOOTER, sizeof(OSC52_FOOTER) - 1) != -1) {
+            free(b64_data);
+            return;
         }
-    #endif
+        free(b64_data);
+    }
 
-    if (getenv("WSL_DISTRO_NAME") != NULL) {        // WSL
-        FILE *pipe = popen("clip.exe 2>/dev/null", "w");
+    if (E.sys.clipboard_cmd != NULL) {
+        FILE *pipe = popen(E.sys.clipboard_cmd, "w");
         if (pipe != NULL) {
             fwrite(data, 1, len, pipe);
-            if (pclose(pipe) == 0) return;
+            pclose(pipe);
+        } else {
+            editorSetStatusMsg("Clipboard error: Failed to run clipboard command.");
         }
+    } else {
+        editorSetStatusMsg("Clipboard error: Unsupported OS or missing clipboard tool.");
     }
-
-    if (getenv("SSH_TTY") == NULL) {
-        if (getenv("WAYLAND_DISPLAY")) {            // Wayland
-            FILE *pipe = popen("wl-copy 2>/dev/null", "w");
-            if (pipe) {
-                fwrite(data, 1, len, pipe);
-                if (pclose(pipe) == 0) return;
-            }
-        }
-        if (getenv("DISPLAY")) {                    // X11
-            FILE *pipe = popen("xclip -selection clipboard 2>/dev/null", "w");
-            if (pipe) {
-                fwrite(data, 1, len, pipe);
-                if (pclose(pipe) == 0) return;
-            }
-
-            pipe = popen("xsel --clipboard --input 2>/dev/null", "w");
-            if (pipe) {
-                fwrite(data, 1, len, pipe);
-                if (pclose(pipe) == 0) return;
-            }
-        }
-    }
-
-    size_t output_len = 4 * ((len + 2) / 3);        // Fallback - OSC 52
-    char *b64_data = safeMalloc(output_len + 1);
-    base64Encode(data, len, b64_data);
-
-    if (write(STDOUT_FILENO, OSC52_HEADER, sizeof(OSC52_HEADER) - 1) == -1) {}
-    if (write(STDOUT_FILENO, b64_data, output_len) == -1) {}
-    if (write(STDOUT_FILENO, OSC52_FOOTER, sizeof(OSC52_FOOTER) - 1) == -1) {}
-
-    free(b64_data);
 }
 
 void editorBuildMatchList(const char *query) {
@@ -3558,7 +3583,7 @@ void recordCommand(CommandType type, size_t offset, const char *text, size_t len
         if (time_elapsed < UNDO_TIMEOUT_MS && last_cmd->type == type && last_cmd->transaction_id == current_txn) {
             if (type == CMD_INSERT && offset == last_cmd->offset + last_cmd->len) {
                 if (last_cmd->len + len + 1 > last_cmd->capacity) {
-                    last_cmd->capacity = last_cmd->capacity == 0 ? SMALL_BUFFER_SIZE : last_cmd->capacity * 2;
+                    last_cmd->capacity = last_cmd->capacity == 0 ? BUFFER_SIZE_32 : last_cmd->capacity * 2;
                     while (last_cmd->capacity < last_cmd->len + len + 1) last_cmd->capacity *= 2;
                     last_cmd->text = safeRealloc(last_cmd->text, last_cmd->capacity);
                 }
@@ -3605,7 +3630,7 @@ void recordCommand(CommandType type, size_t offset, const char *text, size_t len
         cmd->type = type;
         cmd->offset = offset;
         cmd->len = len;
-        cmd->capacity = len < SMALL_BUFFER_SIZE ? SMALL_BUFFER_SIZE : len * 2;
+        cmd->capacity = len < BUFFER_SIZE_32 ? BUFFER_SIZE_32 : len * 2;
         cmd->text = safeMalloc(cmd->capacity);
         memcpy(cmd->text, text, len);
         cmd->text[len] = '\0';
@@ -3811,25 +3836,27 @@ void editorMouseDoubleClick() {
 
     size_t line_len;
     char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-    if (line_text && line_len > 0) {
-        int cx = E.cursor.x;
-        if ((size_t)cx >= line_len) cx = line_len - 1;
-
-        if (cx >= 0 && isWordChar(line_text[cx])) {
-            int start_x = cx;
-            int end_x = cx;
-            while (start_x > 0 && isWordChar(line_text[start_x - 1]))
-                start_x--;
-            while ((size_t)end_x < line_len && isWordChar(line_text[end_x]))
-                end_x++;
-
-            E.sel.active = true;
-            E.sel.sy = E.cursor.y;
-            E.sel.sx = start_x;
-            E.sel.ey = E.cursor.y;
-            E.sel.ex = end_x;
-            E.cursor.x = end_x;
-            E.cursor.preferred_x = E.cursor.x;
+    if (line_text) {
+        if (line_len > 0) {
+            int cx = E.cursor.x;
+            if ((size_t)cx >= line_len) cx = line_len - 1;
+    
+            if (cx >= 0 && isWordChar(line_text[cx])) {
+                int start_x = cx;
+                int end_x = cx;
+                while (start_x > 0 && isWordChar(line_text[start_x - 1]))
+                    start_x--;
+                while ((size_t)end_x < line_len && isWordChar(line_text[end_x]))
+                    end_x++;
+    
+                E.sel.active = true;
+                E.sel.sy = E.cursor.y;
+                E.sel.sx = start_x;
+                E.sel.ey = E.cursor.y;
+                E.sel.ex = end_x;
+                E.cursor.x = end_x;
+                E.cursor.preferred_x = E.cursor.x;
+            }
         }
         free(line_text);
     }
@@ -3854,12 +3881,12 @@ void editorReadFromPipe(int fd, const char *filename) {
     else
         E.buf.filename = NULL;
 
-    size_t capacity = LARGE_BUFFER_SIZE;
+    size_t capacity = BUFFER_SIZE_1024;
     char *buffer = safeMalloc(capacity);
     size_t len = 0;
 
     ssize_t nread;
-    char temp[LARGE_BUFFER_SIZE];
+    char temp[BUFFER_SIZE_1024];
     while ((nread = read(fd, temp, sizeof(temp))) > 0) {
         if (len + nread + 1 > capacity) {
             capacity = (len + nread) * 2;
@@ -3997,7 +4024,7 @@ void editorSave() {
     close(fd);
 
     if (success) {
-        char sizebuf[SMALL_BUFFER_SIZE];
+        char sizebuf[BUFFER_SIZE_32];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
         if (rename(tmp_filename, E.buf.filename) == -1) {
             unlink(tmp_filename);
@@ -4203,7 +4230,7 @@ void getEditorDirectory(char *dir, size_t size) {
     }
 #else
     if (readlink("/proc/self/exe", path, sizeof(path) - 1) == -1)
-        strncpy(path, ".", sizeof(path));
+        strcpy(path, ".");
 #endif
 
     char *last_slash = strrchr(path, '/');
@@ -4212,6 +4239,22 @@ void getEditorDirectory(char *dir, size_t size) {
         snprintf(dir, size, "%s", path);
     } else {
         snprintf(dir, size, ".");
+    }
+}
+
+void getEditorClipboardCmd() {
+#ifdef __APPLE__
+    if (getenv("SSH_TTY") == NULL)
+        E.sys.clipboard_cmd = "pbcopy 2>/dev/null";
+#endif
+
+    if (!E.sys.clipboard_cmd && getenv("WSL_DISTRO_NAME") != NULL)
+        E.sys.clipboard_cmd = "clip.exe 2>/dev/null";
+    if (!E.sys.clipboard_cmd && getenv("SSH_TTY") == NULL) {
+        if (getenv("WAYLAND_DISPLAY"))
+            E.sys.clipboard_cmd = "wl-copy 2>/dev/null";
+        else if (getenv("DISPLAY"))
+            E.sys.clipboard_cmd = "xclip -selection clipboard 2>/dev/null";
     }
 }
 
@@ -4318,7 +4361,7 @@ char *safeStrdup(const char *str) {
 
 void abAppend(AppendBuffer *ab, const char *str, int len) {
     if (ab->len + len >= ab->capacity) {
-        int new_capacity = ab->capacity == 0 ? LARGE_BUFFER_SIZE : ab->capacity * 2;
+        int new_capacity = ab->capacity == 0 ? BUFFER_SIZE_1024 : ab->capacity * 2;
         while (new_capacity < ab->len + len) new_capacity *= 2;
 
         ab->b = safeRealloc(ab->b, new_capacity);
@@ -4502,7 +4545,7 @@ void editorLoadThemeConfig(const char *filename) {
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
-    int capacity = SMALL_BUFFER_SIZE;
+    int capacity = BUFFER_SIZE_32;
     E.ts.theme_rules = safeMalloc(sizeof(ThemeRule) * capacity);
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
         line[strcspn(line, NEW_LINE)] = '\0';
@@ -4551,7 +4594,7 @@ void editorLoadTSConfig(const char *filename) {
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
-    int capacity = SMALL_BUFFER_SIZE;
+    int capacity = BUFFER_SIZE_32;
     E.ts.lang_mappings = safeMalloc(sizeof(LangMapping) * capacity);
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
         line[strcspn(line, NEW_LINE)] = '\0';
@@ -4613,7 +4656,7 @@ TSLanguage *editorLoadLanguage(const char *filename) {
         return NULL;
     }
 
-    char func_name[SMALL_BUFFER_SIZE];
+    char func_name[BUFFER_SIZE_32];
     snprintf(func_name, sizeof(func_name), "tree_sitter_%s", lang_name);
 
     dlerror();
