@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.1"
+#define CYPHER_VERSION      "1.6.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -73,6 +73,7 @@
 #define CURSOR_STEADY_BLOCK     "\x1b[6 q"
 #define CURSOR_DEFAULT          "\x1b[0 q"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;2;60;60;60m"
+#define DARK_GRAY_BG_COLOR      "\x1b[48;2;15;15;15m"
 #define RESET_BG_COLOR          "\x1b[49m"
 #define REMOVE_GRAPHICS         "\x1b[m"
 #define INVERTED_COLORS         "\x1b[7m"
@@ -1606,7 +1607,12 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     static size_t render_cap = 0;
 
     size_t line_len = editorGetLineLength(&E.buf, file_row);
-    if (line_len == 0) return;
+    bool is_current_line = (file_row == E.cursor.y);
+    if (line_len == 0) {
+        if (is_current_line)
+            abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
+        return;
+    }
 
     if (line_len + 1 > line_cap) {
         if (line_cap == 0) line_cap = ALLOC_PADDING;
@@ -1652,6 +1658,9 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     int sel_y1 = 0, sel_x1 = 0, sel_y2 = 0, sel_x2 = 0;
     editorGetNormalizedSelection(&sel_y1, &sel_x1, &sel_y2, &sel_x2);
 
+    if (is_current_line)
+        abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
+
     uint32_t current_fg = DEFAULT_FG_COLOR_HEX;
     bool current_inv = false;
 
@@ -1692,7 +1701,10 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
         }
         abAppend(ab, &render[rx], 1);
     }
+
     abAppend(ab, REMOVE_GRAPHICS, strlen(REMOVE_GRAPHICS));
+    if (is_current_line)
+        abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
 }
 
 void editorRefreshScreen() {
@@ -1743,11 +1755,19 @@ void editorDrawRows(AppendBuffer *ab) {
     highlightFormatSpecifiers(start_byte, end_byte, colors);
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
-        if (file_row >= E.buf.num_lines)
+        bool is_current_line = (file_row == E.cursor.y);
+        if (file_row >= E.buf.num_lines) {
+            if (is_current_line)
+                abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
             abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
-        else
+        } else {
             editorDrawSingleRow(ab, file_row, start_byte, colors);
-        abAppend(ab, CLEAR_LINE NEW_LINE, strlen(CLEAR_LINE NEW_LINE));
+        }
+
+        abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
+        if (is_current_line)
+            abAppend(ab, RESET_BG_COLOR, sizeof(RESET_BG_COLOR) - 1);
+        abAppend(ab, NEW_LINE, sizeof(NEW_LINE) - 1);
     }
 
     free(colors);
