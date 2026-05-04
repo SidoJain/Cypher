@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.3"
+#define CYPHER_VERSION      "1.6.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -85,7 +85,7 @@
 #define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 #define ANSI_RGB_FMT            "\x1b[38;2;%d;%d;%dm"
-#define OSC0_HEADER             "\x1b]0;Cypher - "
+#define OSC0_HEADER             "\x1b]0;"
 #define OSC52_HEADER            "\033]52;c;"
 #define OSC_FOOTER              "\007"
 
@@ -437,6 +437,7 @@ void editorReplaceCallback(const char *, int);
 bool editorReplaceCurrent(const char *, const char *);
 int editorReplaceAll(const char *);
 void editorCenterViewOnMatch();
+void editorResetFind();
 
 // undo-redo
 void freeEditCommand(EditCommand *);
@@ -502,6 +503,7 @@ void editorLoadTSConfig(const char *);
 const char *editorGetLanguageName(const char *);
 TSLanguage *editorLoadLanguage(const char *);
 void editorDebugSyntaxUnderCursor();
+void editorFreeTreeSitter();
 
 /*** Main ***/
 
@@ -667,41 +669,8 @@ void editorCleanup() {
     E.sel.clipboard = NULL;
     E.sel.paste_buf = NULL;
 
-    free(E.find.query);
-    free(E.find.match_lines);
-    free(E.find.match_cols);
-    E.find.query = NULL;
-    E.find.match_lines = NULL;
-    E.find.match_cols = NULL;
-    E.find.num_matches = 0;
-    E.find.current_idx = -1;
-    E.find.active = false;
-
-    if (E.ts.theme_colors) {
-        free(E.ts.theme_colors);
-        E.ts.theme_colors = NULL;
-    }
-    if (E.ts.query_cursor) {
-        ts_query_cursor_delete(E.ts.query_cursor);
-        E.ts.query_cursor = NULL;
-    }
-    if (E.ts.query) {
-        ts_query_delete(E.ts.query);
-        E.ts.query = NULL;
-    }
-    if (E.ts.tree) {
-        ts_tree_delete(E.ts.tree);
-        E.ts.tree = NULL;
-    }
-    if (E.ts.parser) {
-        ts_parser_delete(E.ts.parser);
-        E.ts.parser = NULL;
-    }
-    if (E.ts.language_lib) {
-        dlclose(E.ts.language_lib);
-        E.ts.language_lib = NULL;
-    }
-
+    editorResetFind();
+    editorFreeTreeSitter();
     if (E.ts.theme_rules) {
         for (int i = 0; i < E.ts.num_theme_rules; i++)
             free(E.ts.theme_rules[i].prefix);
@@ -709,7 +678,6 @@ void editorCleanup() {
         E.ts.theme_rules = NULL;
         E.ts.num_theme_rules = 0;
     }
-
     if (E.ts.lang_mappings) {
         for (int i = 0; i < E.ts.num_lang_mappings; i++) {
             free(E.ts.lang_mappings[i].extension);
@@ -1500,7 +1468,6 @@ bool editorIsCharInFindMatch(int file_row, int cx) {
     int low = 0;
     int high = E.find.num_matches - 1;
     int first_match_idx = -1;
-
     while (low <= high) {
         int mid = low + (high - low) / 2;
         if (E.find.match_lines[mid] == file_row) {
@@ -1516,9 +1483,7 @@ bool editorIsCharInFindMatch(int file_row, int cx) {
     if (first_match_idx != -1) {
         for (int i = first_match_idx; i < E.find.num_matches; i++) {
             if (E.find.match_lines[i] != file_row) break;
-            if (cx >= E.find.match_cols[i] && cx < E.find.match_cols[i] + query_len) {
-                return true;
-            }
+            if (cx >= E.find.match_cols[i] && cx < E.find.match_cols[i] + query_len) return true;
         }
     }
     return false;
@@ -1689,11 +1654,10 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
 
         bool needs_bg = char_selected || in_bracket || in_find;
         if (needs_bg != current_inv) {
-            if (needs_bg) {
+            if (needs_bg)
                 abAppend(ab, LIGHT_GRAY_BG_COLOR, sizeof(LIGHT_GRAY_BG_COLOR) - 1);
-            } else {
+            else
                 abAppend(ab, RESET_BG_COLOR, sizeof(RESET_BG_COLOR) - 1);
-            }
             current_inv = needs_bg;
         }
 
@@ -2085,17 +2049,16 @@ void editorScrollHorizontal(ScrollDirection direction) {
             if (line_text) {
                 int rx = editorLineCxToRx(line_text, line_len, line_len);
                 if (rx > max_rx) max_rx = rx;
-                free(line_text);
             }
+            free(line_text);
         }
 
         int max_col_offset = max_rx - MARGIN;
         if (max_col_offset < 0) max_col_offset = 0;
 
         E.view.col_offset += scroll_amount;
-        if (E.view.col_offset > max_col_offset) {
+        if (E.view.col_offset > max_col_offset)
             E.view.col_offset = max_col_offset;
-        }
     }
 }
 
@@ -2653,9 +2616,11 @@ void editorInsertNewline() {
     int base_indent = getLineIndentation(line_text, line_len);
     IndentStrategy strategy = getIndentStrategy(line_text, line_len);
 
+    int total_len;
+    char *insert_str;
     if (strategy == INDENT_SPLIT) {
-        int total_len = (base_indent + TAB_SIZE + 1) + (base_indent + 1);
-        char *insert_str = safeCalloc(1, total_len + 1);
+        total_len = (base_indent + TAB_SIZE + 1) + (base_indent + 1);
+        insert_str = safeCalloc(1, total_len + 1);
 
         int pos = 0;
         insert_str[pos++] = '\n';
@@ -2667,44 +2632,36 @@ void editorInsertNewline() {
         memset(insert_str + pos, ' ', TAB_SIZE);
         pos += TAB_SIZE;
         insert_str[pos++] = '\n';
-        if (base_indent > 0) {
+        if (base_indent > 0)
             memcpy(insert_str + pos, line_text, base_indent);
-            pos += base_indent;
-        }
 
-        executeInsert(offset, insert_str, total_len);
-        E.cursor.y++;
         E.cursor.x = base_indent + TAB_SIZE;
-        free(insert_str);
     } else if (strategy == INDENT_EXTRA) {
-        int total_len = base_indent + TAB_SIZE + 1;
-        char *insert_str = safeCalloc(1, total_len + 1);
+        total_len = base_indent + TAB_SIZE + 1;
+        insert_str = safeCalloc(1, total_len + 1);
 
         insert_str[0] = '\n';
         if (base_indent > 0) memcpy(insert_str + 1, line_text, base_indent);
         memset(insert_str + 1 + base_indent, ' ', TAB_SIZE);
 
-        executeInsert(offset, insert_str, total_len);
-        E.cursor.y++;
         E.cursor.x = base_indent + TAB_SIZE;
-        free(insert_str);
     } else {
-        int total_len = base_indent + 1;
-        char *insert_str = safeMalloc(total_len + 1);
+        total_len = base_indent + 1;
+        insert_str = safeMalloc(total_len + 1);
 
         insert_str[0] = '\n';
         if (base_indent > 0) memcpy(insert_str + 1, line_text, base_indent);
         insert_str[total_len] = '\0';
-
-        executeInsert(offset, insert_str, total_len);
-        E.cursor.y++;
         E.cursor.x = base_indent;
-        free(insert_str);
     }
+
+    executeInsert(offset, insert_str, total_len);
+    E.cursor.y++;
+    free(insert_str);
 
     E.cursor.preferred_x = E.cursor.x;
     E.buf.dirty = true;
-    if (line_text) free(line_text);
+    free(line_text);
 }
 
 void editorMoveRowUp() {
@@ -2948,9 +2905,8 @@ bool editorShouldUncommentBlock(int start_y, int end_y, const char *c_str, size_
 
         if ((size_t)first_non_space < line_len) {
             has_non_empty = true;
-            if (line_len < (size_t)first_non_space + c_len || strncmp(line + first_non_space, c_str, c_len) != 0) {
+            if (line_len < (size_t)first_non_space + c_len || strncmp(line + first_non_space, c_str, c_len) != 0)
                 all_commented = false;
-            }
         }
         free(line);
     }
@@ -3301,15 +3257,7 @@ void editorFindCallback(const char *query, int key) {
     if (key == '\r' || key == ESCAPE_CHAR || query[0] == '\0') {
         if (key == ESCAPE_CHAR)
             editorSetStatusMsg("Find cancelled");
-        E.find.active = false;
-        free(E.find.query);
-        E.find.query = NULL;
-        free(E.find.match_lines);
-        E.find.match_lines = NULL;
-        free(E.find.match_cols);
-        E.find.match_cols = NULL;
-        E.find.num_matches = 0;
-        E.find.current_idx = -1;
+        editorResetFind();
         return;
     }
 
@@ -3362,15 +3310,7 @@ void editorReplace() {
         editorSetStatusMsg("Replace cancelled");
         free(find_query);
         free(replace_query);
-        free(E.find.query);
-        free(E.find.match_lines);
-        free(E.find.match_cols);
-        E.find.query = NULL;
-        E.find.match_lines = NULL;
-        E.find.match_cols = NULL;
-        E.find.num_matches = 0;
-        E.find.current_idx = -1;
-        E.find.active = false;
+        editorResetFind();
         return;
     }
 
@@ -3459,32 +3399,13 @@ void editorReplace() {
         snprintf(msg, sizeof(msg), "Replaced %d occurrence%s", replaced, replaced == 1 ? "" : "s");
         editorSetStatusMsg(msg);
     }
-
-    free(replace_query);
-    free(find_query);
-    free(E.find.query);
-    free(E.find.match_lines);
-    free(E.find.match_cols);
-    E.find.query = NULL;
-    E.find.match_lines = NULL;
-    E.find.match_cols = NULL;
-    E.find.num_matches = 0;
-    E.find.current_idx = -1;
-    E.find.active = false;
+    editorResetFind();
 }
 
 void editorReplaceCallback(const char *query, int key) {
     (void)key;
     if (query == NULL || !query[0]) {
-        E.find.active = false;
-        free(E.find.query);
-        E.find.query = NULL;
-        free(E.find.match_lines);
-        E.find.match_lines = NULL;
-        free(E.find.match_cols);
-        E.find.match_cols = NULL;
-        E.find.num_matches = 0;
-        E.find.current_idx = -1;
+        editorResetFind();
         return;
     }
 
@@ -3562,8 +3483,7 @@ void editorCenterViewOnMatch() {
         size_t render_line_len;
         char *render_line_text = editorGetLine(&E.buf, row, &render_line_len);
         int render_pos = editorLineCxToRx(render_line_text, render_line_len, E.cursor.x);
-        if (render_line_text)
-            free(render_line_text);
+        free(render_line_text);
 
         if (render_pos < E.view.col_offset || render_pos >= E.view.col_offset + E.view.screen_cols) {
             E.view.col_offset = render_pos - (E.view.screen_cols / 2);
@@ -3573,8 +3493,19 @@ void editorCenterViewOnMatch() {
     }
 }
 
+void editorResetFind() {
+    free(E.find.query);
+    free(E.find.match_lines);
+    free(E.find.match_cols);
+    E.find.query = NULL;
+    E.find.match_lines = NULL;
+    E.find.match_cols = NULL;
+    E.find.num_matches = 0;
+    E.find.current_idx = -1;
+    E.find.active = false;
+}
+
 void freeEditCommand(EditCommand *cmd) {
-    if (!cmd->text) return;
     free(cmd->text);
     cmd->text = NULL;
 }
@@ -3786,9 +3717,8 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
             current_offset--;
             bracket = ptCharAt(&E.buf.pt, current_offset);
         }
-        if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']')) {
+        if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
             return false;
-        }
     }
 
     char match = getMatchingBracket(bracket);
@@ -3881,8 +3811,8 @@ void editorMouseDoubleClick() {
                 E.cursor.preferred_x = E.cursor.x;
             }
         }
-        free(line_text);
     }
+    free(line_text);
 }
 
 void editorMouseDragClick() {
@@ -4063,27 +3993,7 @@ void editorSave() {
             editorSetStatusMsg(msg);
 
             if (saved_as_new_file) {
-                if (E.ts.query_cursor) {
-                    ts_query_cursor_delete(E.ts.query_cursor);
-                    E.ts.query_cursor = NULL;
-                }
-                if (E.ts.query) {
-                    ts_query_delete(E.ts.query);
-                    E.ts.query = NULL;
-                }
-                if (E.ts.tree) {
-                    ts_tree_delete(E.ts.tree);
-                    E.ts.tree = NULL;
-                }
-                if (E.ts.parser) {
-                    ts_parser_delete(E.ts.parser);
-                    E.ts.parser = NULL;
-                }
-                if (E.ts.language_lib) {
-                    dlclose(E.ts.language_lib);
-                    E.ts.language_lib = NULL;
-                }
-
+                editorFreeTreeSitter();
                 editorUpdateWindowTitle();
                 editorInitTreeSitter();
             }
@@ -4330,7 +4240,7 @@ void editorTrimTrailingWhitespace() {
         size_t line_len;
         char *line_text = editorGetLine(&E.buf, y, &line_len);
         if (!line_text || line_len == 0) {
-            if (line_text) free(line_text);
+            free(line_text);
             continue;
         }
 
@@ -4363,7 +4273,7 @@ void editorUpdateWindowTitle() {
     const char *display_name = "Untitled";
     if (E.buf.filename) {
         display_name = strrchr(E.buf.filename, '/');
-        if (!display_name) display_name = strrchr(E.buf.filename, '\\'); 
+        if (!display_name) display_name = strrchr(E.buf.filename, '\\');
         display_name = display_name ? display_name + 1 : E.buf.filename;
     }
 
@@ -4536,10 +4446,8 @@ const char *readPieceTable(void *payload, uint32_t byte_index, TSPoint position,
 }
 
 void editorLoadTheme(TSQuery *query) {
-    if (E.ts.theme_colors) {
-        free(E.ts.theme_colors);
-        E.ts.theme_colors = NULL;
-    }
+    free(E.ts.theme_colors);
+    E.ts.theme_colors = NULL;
     if (!query) {
         E.ts.theme_color_count = 0;
         return;
@@ -4746,5 +4654,30 @@ void editorDebugSyntaxUnderCursor() {
         editorSetStatusMsg(msg);
     } else {
         editorSetStatusMsg("TS Capture: none");
+    }
+}
+
+void editorFreeTreeSitter() {
+    free(E.ts.theme_colors);
+    E.ts.theme_colors = NULL;
+    if (E.ts.query_cursor) {
+        ts_query_cursor_delete(E.ts.query_cursor);
+        E.ts.query_cursor = NULL;
+    }
+    if (E.ts.query) {
+        ts_query_delete(E.ts.query);
+        E.ts.query = NULL;
+    }
+    if (E.ts.tree) {
+        ts_tree_delete(E.ts.tree);
+        E.ts.tree = NULL;
+    }
+    if (E.ts.parser) {
+        ts_parser_delete(E.ts.parser);
+        E.ts.parser = NULL;
+    }
+    if (E.ts.language_lib) {
+        dlclose(E.ts.language_lib);
+        E.ts.language_lib = NULL;
     }
 }
