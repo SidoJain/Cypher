@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.2"
+#define CYPHER_VERSION      "1.6.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -50,6 +50,7 @@
 #define STATUS_LENGTH           256
 #define BUFFER_SIZE_32          32
 #define BUFFER_SIZE_128         128
+#define BUFFER_SIZE_256         256
 #define BUFFER_SIZE_1024        1024
 #define BUFFER_SIZE_4096        4096
 #define BUFFER_SIZE_PADDING     64
@@ -84,8 +85,9 @@
 #define ENABLE_MOUSE            "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"
 #define DISABLE_MOUSE           "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l"
 #define ANSI_RGB_FMT            "\x1b[38;2;%d;%d;%dm"
+#define OSC0_HEADER             "\x1b]0;Cypher - "
 #define OSC52_HEADER            "\033]52;c;"
-#define OSC52_FOOTER            "\007"
+#define OSC_FOOTER              "\007"
 
 #define DEFAULT_FG_COLOR_HEX    0xFFFFFFFF
 #define SELECTION_COLOR_HEX     0xD4D4D4
@@ -477,6 +479,7 @@ void getEditorDirectory(char *, size_t);
 void getEditorClipboardCmd();
 char *expandTabs(const char *, size_t, size_t *);
 void editorTrimTrailingWhitespace();
+void editorUpdateWindowTitle();
 
 // memory
 void *safeMalloc(size_t);
@@ -541,6 +544,7 @@ int main(int argc, char *argv[]) {
         editorUpdateLineOffsets(&E.buf);
     }
 
+    editorUpdateWindowTitle();
     editorInitTreeSitter();
     if (E.sys.status_msg[0] == '\0') editorSetStatusMsg("HELP: Ctrl-H");
 
@@ -1862,8 +1866,7 @@ void editorDrawWelcomeMessage(AppendBuffer *ab) {
             for (int i = 1; i < padding; i++)
                 abAppend(ab, " ", 1);
             abAppend(ab, welcome, welcome_len);
-        }
-        else
+        } else
             abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
         abAppend(ab, CLEAR_LINE NEW_LINE, sizeof(CLEAR_LINE NEW_LINE) - 1);
     }
@@ -3176,7 +3179,7 @@ void clipboardCopyToSystem(const char *data, int len) {
         base64Encode(data, len, b64_data);
         if (write(STDOUT_FILENO, OSC52_HEADER, sizeof(OSC52_HEADER) - 1) != -1 &&
             write(STDOUT_FILENO, b64_data, output_len) != -1 &&
-            write(STDOUT_FILENO, OSC52_FOOTER, sizeof(OSC52_FOOTER) - 1) != -1) {
+            write(STDOUT_FILENO, OSC_FOOTER, sizeof(OSC_FOOTER) - 1) != -1) {
             free(b64_data);
             return;
         }
@@ -3860,7 +3863,7 @@ void editorMouseDoubleClick() {
         if (line_len > 0) {
             int cx = E.cursor.x;
             if ((size_t)cx >= line_len) cx = line_len - 1;
-    
+
             if (cx >= 0 && isWordChar(line_text[cx])) {
                 int start_x = cx;
                 int end_x = cx;
@@ -3868,7 +3871,7 @@ void editorMouseDoubleClick() {
                     start_x--;
                 while ((size_t)end_x < line_len && isWordChar(line_text[end_x]))
                     end_x++;
-    
+
                 E.sel.active = true;
                 E.sel.sy = E.cursor.y;
                 E.sel.sx = start_x;
@@ -4049,8 +4052,7 @@ void editorSave() {
         if (rename(tmp_filename, E.buf.filename) == -1) {
             unlink(tmp_filename);
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
-        }
-        else {
+        } else {
             E.buf.dirty = false;
             E.buf.quit_times = QUIT_TIMES;
             history.save_point = history.undo_top;
@@ -4081,6 +4083,8 @@ void editorSave() {
                     dlclose(E.ts.language_lib);
                     E.ts.language_lib = NULL;
                 }
+
+                editorUpdateWindowTitle();
                 editorInitTreeSitter();
             }
         }
@@ -4353,6 +4357,20 @@ void editorTrimTrailingWhitespace() {
     editorEndMacro();
     if (trimmed_any)
         editorParseTreeSitter();
+}
+
+void editorUpdateWindowTitle() {
+    const char *display_name = "Untitled";
+    if (E.buf.filename) {
+        display_name = strrchr(E.buf.filename, '/');
+        if (!display_name) display_name = strrchr(E.buf.filename, '\\'); 
+        display_name = display_name ? display_name + 1 : E.buf.filename;
+    }
+
+    if (write(STDOUT_FILENO, OSC0_HEADER, sizeof(OSC0_HEADER) - 1) != -1 &&
+        write(STDOUT_FILENO, display_name, strlen(display_name)) != -1 &&
+        write(STDOUT_FILENO, OSC_FOOTER, sizeof(OSC_FOOTER) - 1) != -1)
+        return;
 }
 
 void *safeMalloc(size_t size) {
