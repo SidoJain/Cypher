@@ -1965,26 +1965,21 @@ void editorMoveCursor(int key) {
 
 void editorMoveWordLeft() {
     if (E.cursor.y >= E.buf.num_lines) return;
-    size_t line_len;
-    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-    if (!line_text) return;
 
-    while (E.cursor.x > 0 && !isWordChar(line_text[E.cursor.x - 1])) E.cursor.x--;
-    while (E.cursor.x > 0 && isWordChar(line_text[E.cursor.x - 1])) E.cursor.x--;
+    size_t line_start = E.buf.line_offsets[E.cursor.y];
+    while (E.cursor.x > 0 && !isWordChar(ptCharAt(&E.buf.pt, line_start + E.cursor.x - 1))) E.cursor.x--;
+    while (E.cursor.x > 0 && isWordChar(ptCharAt(&E.buf.pt, line_start + E.cursor.x - 1))) E.cursor.x--;
     E.cursor.preferred_x = E.cursor.x;
-    free(line_text);
 }
 
 void editorMoveWordRight() {
     if (E.cursor.y >= E.buf.num_lines) return;
-    size_t line_len;
-    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-    if (!line_text) return;
 
-    while ((size_t)E.cursor.x < line_len && !isWordChar(line_text[E.cursor.x])) E.cursor.x++;
-    while ((size_t)E.cursor.x < line_len && isWordChar(line_text[E.cursor.x])) E.cursor.x++;
+    size_t line_len = editorGetLineLength(&E.buf, E.cursor.y);
+    size_t line_start = E.buf.line_offsets[E.cursor.y];
+    while ((size_t)E.cursor.x < line_len && !isWordChar(ptCharAt(&E.buf.pt, line_start + E.cursor.x))) E.cursor.x++;
+    while ((size_t)E.cursor.x < line_len && isWordChar(ptCharAt(&E.buf.pt, line_start + E.cursor.x))) E.cursor.x++;
     E.cursor.preferred_x = E.cursor.x;
-    free(line_text);
 }
 
 void editorScrollPageUp() {
@@ -3787,32 +3782,29 @@ void editorMouseLeftClick() {
 void editorMouseDoubleClick() {
     if (E.cursor.y >= E.buf.num_lines) return;
 
-    size_t line_len;
-    char *line_text = editorGetLine(&E.buf, E.cursor.y, &line_len);
-    if (line_text) {
-        if (line_len > 0) {
-            int cx = E.cursor.x;
-            if ((size_t)cx >= line_len) cx = line_len - 1;
+    size_t line_len = editorGetLineLength(&E.buf, E.cursor.y);
+    if (line_len == 0) return;
 
-            if (cx >= 0 && isWordChar(line_text[cx])) {
-                int start_x = cx;
-                int end_x = cx;
-                while (start_x > 0 && isWordChar(line_text[start_x - 1]))
-                    start_x--;
-                while ((size_t)end_x < line_len && isWordChar(line_text[end_x]))
-                    end_x++;
+    size_t line_start = E.buf.line_offsets[E.cursor.y];
+    int cx = E.cursor.x;
+    if ((size_t)cx >= line_len) cx = line_len - 1;
 
-                E.sel.active = true;
-                E.sel.sy = E.cursor.y;
-                E.sel.sx = start_x;
-                E.sel.ey = E.cursor.y;
-                E.sel.ex = end_x;
-                E.cursor.x = end_x;
-                E.cursor.preferred_x = E.cursor.x;
-            }
-        }
+    if (cx >= 0 && isWordChar(ptCharAt(&E.buf.pt, line_start + cx))) {
+        int start_x = cx;
+        int end_x = cx;
+        while (start_x > 0 && isWordChar(ptCharAt(&E.buf.pt, line_start + start_x - 1)))
+            start_x--;
+        while ((size_t)end_x < line_len && isWordChar(ptCharAt(&E.buf.pt, line_start + end_x)))
+            end_x++;
+
+        E.sel.active = true;
+        E.sel.sy = E.cursor.y;
+        E.sel.sx = start_x;
+        E.sel.ey = E.cursor.y;
+        E.sel.ex = end_x;
+        E.cursor.x = end_x;
+        E.cursor.preferred_x = E.cursor.x;
     }
-    free(line_text);
 }
 
 void editorMouseDragClick() {
@@ -4158,7 +4150,7 @@ void getEditorDirectory(char *dir, size_t size) {
     if (_NSGetExecutablePath(path, &len) == 0) {
         char *real_path = realpath(path, NULL);
         if (real_path) {
-            strncpy(path, real_path, sizeof(path));
+            snprintf(path, sizeof(path), "%s", real_path);
             free(real_path);
         }
     }
