@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.4"
+#define CYPHER_VERSION      "1.6.5"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -3924,13 +3924,20 @@ void editorSave() {
     bool saved_as_new_file = new_file;
     new_file = false;
 
+    // check if file is symlink
+    char *target_filename = NULL;
+    struct stat lst;
+    if (lstat(E.buf.filename, &lst) == 0 && S_ISLNK(lst.st_mode))
+        target_filename = realpath(E.buf.filename, NULL);
+    const char *actual_filename = target_filename ? target_filename : E.buf.filename;
+
     size_t len = strlen(E.buf.filename) + 5;
     char *tmp_filename = safeMalloc(len);
     snprintf(tmp_filename, len, "%s.tmp", E.buf.filename);
 
     mode_t file_mode = DEFAULT_FILE_PERMS;
     struct stat st;
-    if (stat(E.buf.filename, &st) == 0) file_mode = st.st_mode; // keep existing permissions
+    if (stat(actual_filename, &st) == 0) file_mode = st.st_mode; // keep existing permissions
     int fd = open(tmp_filename,
                   O_RDWR  |     // read and write
                   O_CREAT |     // create if doesn't exist
@@ -3971,7 +3978,7 @@ void editorSave() {
     if (success) {
         char sizebuf[BUFFER_SIZE_32];
         humanReadableSize(total_bytes, sizebuf, sizeof(sizebuf));
-        if (rename(tmp_filename, E.buf.filename) == -1) {
+        if (rename(tmp_filename, actual_filename) == -1) {
             unlink(tmp_filename);
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
         } else {
@@ -3995,6 +4002,7 @@ void editorSave() {
         editorSetStatusMsg("Can't save! Write error on disk.");
     }
     free(tmp_filename);
+    free(target_filename);
 }
 
 void editorHandleCrash(int signum) {
