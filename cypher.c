@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.5"
+#define CYPHER_VERSION      "1.6.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -56,6 +56,7 @@
 #define BUFFER_SIZE_PADDING     64
 #define STATUS_MSG_TIMEOUT_SEC  5
 #define MARGIN                  3
+#define SCROLLOFF               5
 #define DEFAULT_FILE_PERMS      0644
 #define ALLOC_PADDING           256
 #define GROWTH_THRESHOLD        8192
@@ -1896,10 +1897,18 @@ void editorScroll() {
     last_cols = E.view.screen_cols;
     last_rows = E.view.screen_rows;
     if (requires_snap) {
-        if (E.cursor.y < E.view.row_offset)
-            E.view.row_offset = E.cursor.y;
-        if (E.cursor.y >= E.view.row_offset + E.view.screen_rows)
-            E.view.row_offset = E.cursor.y - E.view.screen_rows + 1;
+        int active_scrolloff = SCROLLOFF;
+        if (E.view.screen_rows <= active_scrolloff * 2) {
+            active_scrolloff = (E.view.screen_rows - 1) / 2;
+            if (active_scrolloff < 0) active_scrolloff = 0;
+        }
+        if (E.cursor.y < E.view.row_offset + active_scrolloff) {
+            E.view.row_offset = E.cursor.y - active_scrolloff;
+            if (E.view.row_offset < 0) E.view.row_offset = 0;
+        }
+
+        if (E.cursor.y >= E.view.row_offset + E.view.screen_rows - active_scrolloff)
+            E.view.row_offset = E.cursor.y - E.view.screen_rows + active_scrolloff + 1;
         if (E.cursor.render_x < E.view.col_offset)
             E.view.col_offset = E.cursor.render_x;
         if (E.cursor.render_x >= E.view.col_offset + E.view.screen_cols)
