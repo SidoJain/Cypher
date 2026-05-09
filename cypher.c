@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.6.6"
+#define CYPHER_VERSION      "1.7.0"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -48,6 +48,7 @@
 #define DOUBLE_CLICK_MS         400
 #define PARSE_DEBOUNCE_MS       50
 #define STATUS_LENGTH           256
+#define INIT_UNDO_REDO_CAP      128
 #define BUFFER_SIZE_32          32
 #define BUFFER_SIZE_128         128
 #define BUFFER_SIZE_256         256
@@ -305,9 +306,11 @@ typedef struct {
 } EditCommand;
 
 typedef struct {
-    EditCommand undo_stack[UNDO_REDO_STACK_SIZE];
+    EditCommand *undo_stack;
+    int undo_capacity;
     int undo_top;
-    EditCommand redo_stack[UNDO_REDO_STACK_SIZE];
+    EditCommand *redo_stack;
+    int redo_capacity;
     int redo_top;
     long last_edit_time;
     int current_transaction_id;
@@ -319,14 +322,7 @@ typedef struct {
 
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 EditorConfig E;
-EditorUndoRedo history = {
-    .undo_top = -1,
-    .redo_top = -1,
-    .last_edit_time = 0,
-    .current_transaction_id = 0,
-    .in_transaction = false,
-    .save_point = -1,
-};
+EditorUndoRedo history;
 
 /*** Function Prototypes ***/
 
@@ -634,6 +630,17 @@ void editorInit() {
     E.ts.num_lang_mappings = 0;
     E.ts.needs_reparse = false;
 
+    history.undo_capacity = INIT_UNDO_REDO_CAP;
+    history.undo_stack = safeMalloc(sizeof(EditCommand) * history.undo_capacity);
+    history.undo_top = -1;
+    history.redo_capacity = INIT_UNDO_REDO_CAP;
+    history.redo_stack = safeMalloc(sizeof(EditCommand) * history.redo_capacity);
+    history.redo_top = -1;
+    history.last_edit_time = 0;
+    history.current_transaction_id = 0;
+    history.in_transaction = false;
+    history.save_point = -1;
+
     getEditorClipboardCmd();
 
     if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
@@ -688,6 +695,13 @@ void editorCleanup() {
         E.ts.lang_mappings = NULL;
         E.ts.num_lang_mappings = 0;
     }
+
+    for (int i = 0; i <= history.undo_top; i++)
+        freeEditCommand(&history.undo_stack[i]);
+    for (int i = 0; i <= history.redo_top; i++)
+        freeEditCommand(&history.redo_stack[i]);
+    free(history.undo_stack);
+    free(history.redo_stack);
 }
 
 void editorQuit() {
@@ -3572,15 +3586,9 @@ void recordCommand(CommandType type, size_t offset, const char *text, size_t len
     }
 
     if (!merged) {
-        if (history.undo_top >= UNDO_REDO_STACK_SIZE - 1) {
-            freeEditCommand(&history.undo_stack[0]);
-            memmove(&history.undo_stack[0], &history.undo_stack[1], sizeof(EditCommand) * (UNDO_REDO_STACK_SIZE - 1));
-            history.undo_top--;
-
-            if (history.save_point >= 0)
-                history.save_point--;
-            else if (history.save_point == -1)
-                history.save_point = -2;
+        if (history.undo_top >= history.undo_capacity - 1) {
+            history.undo_capacity *= 2;
+            history.undo_stack = safeRealloc(history.undo_stack, sizeof(EditCommand) * history.undo_capacity);
         }
 
         history.undo_top++;
@@ -3639,6 +3647,11 @@ void editorUndo() {
         EditCommand *cmd = &history.undo_stack[history.undo_top];
         if (is_macro && cmd->transaction_id != target_transaction) break;
 
+        if (history.redo_top >= history.redo_capacity - 1) {
+            history.redo_capacity *= 2;
+            history.redo_stack = safeRealloc(history.redo_stack, sizeof(EditCommand) * history.redo_capacity);
+        }
+
         history.redo_top++;
         history.redo_stack[history.redo_top] = *cmd;
         history.redo_stack[history.redo_top].text = safeStrdup(cmd->text);
@@ -3675,6 +3688,11 @@ void editorRedo() {
         if (history.redo_top < 0) break;
         EditCommand *cmd = &history.redo_stack[history.redo_top];
         if (is_macro && cmd->transaction_id != target_transaction) break;
+
+        if (history.undo_top >= history.undo_capacity - 1) {
+            history.undo_capacity *= 2;
+            history.undo_stack = safeRealloc(history.undo_stack, sizeof(EditCommand) * history.undo_capacity);
+        }
 
         history.undo_top++;
         history.undo_stack[history.undo_top] = *cmd;
