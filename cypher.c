@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.0"
+#define CYPHER_VERSION      "1.7.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -500,6 +500,7 @@ void editorLoadTSConfig(const char *);
 const char *editorGetLanguageName(const char *);
 TSLanguage *editorLoadLanguage(const char *);
 void editorDebugSyntaxUnderCursor();
+bool editorIsOffsetInStringOrComment(size_t);
 void editorFreeTreeSitter();
 
 /*** Main ***/
@@ -3743,6 +3744,9 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
             return false;
     }
 
+    if (editorIsOffsetInStringOrComment(current_offset))
+        return false;
+
     char match = getMatchingBracket(bracket);
     int direction = (bracket == '(' || bracket == '{' || bracket == '[') ? 1 : -1;
     int count = 1;
@@ -3757,8 +3761,12 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
         }
 
         char ch = ptCharAt(&E.buf.pt, current_offset);
-        if (ch == bracket) count++;
-        else if (ch == match) count--;
+        if (ch == bracket || ch == match) {
+            if (!editorIsOffsetInStringOrComment(current_offset)) {
+                if (ch == bracket) count++;
+                else if (ch == match) count--;
+            }
+        }
 
         if (count == 0) {
             editorOffsetToRowCol(&E.buf, current_offset, match_y, match_x);
@@ -4682,6 +4690,19 @@ void editorDebugSyntaxUnderCursor() {
     } else {
         editorSetStatusMsg("TS Capture: none");
     }
+}
+
+bool editorIsOffsetInStringOrComment(size_t offset) {
+    if (!E.ts.tree) return false;
+
+    TSNode root = ts_tree_root_node(E.ts.tree);
+    TSNode node = ts_node_descendant_for_byte_range(root, offset, offset + 1);
+    const char *nodeType = ts_node_type(node);
+    if (!nodeType) return false;
+
+    return (strstr(nodeType, "string") != NULL || 
+            strstr(nodeType, "comment") != NULL || 
+            strstr(nodeType, "char") != NULL);
 }
 
 void editorFreeTreeSitter() {
