@@ -2136,7 +2136,7 @@ void editorJumpCallback(const char *buf, int key) {
 }
 
 void ptInit(PieceTable *pt, const char *file_content, size_t content_len) {
-    pt->orig_buf = file_content ? safeStrdup(file_content) : safeStrdup("");
+    pt->orig_buf = (char *)file_content;
     pt->add_capacity = BUFFER_SIZE_1024;
     pt->add_buf = safeMalloc(pt->add_capacity);
     pt->add_len = 0;
@@ -3917,7 +3917,6 @@ void editorOpen(const char *filename) {
         char *expanded_buffer = expandTabs(buffer, read_size, &expanded_len);
 
         ptInit(&E.buf.pt, expanded_buffer, expanded_len);
-        free(expanded_buffer);
         free(buffer);
     } else {
         ptInit(&E.buf.pt, "", 0);
