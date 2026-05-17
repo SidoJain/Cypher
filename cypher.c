@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.1"
+#define CYPHER_VERSION      "1.7.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -1562,15 +1562,18 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
 
     TSNode root = ts_tree_root_node(E.ts.tree);
     for (size_t i = 0; i < byte_count - 1; i++) {
-        if (text[i] == '%') {
+        if (ptCharAt(&E.buf.pt, start_byte + i) == '%') {
             size_t j = i + 1;
-            if (text[j] == '%') {
+            if (ptCharAt(&E.buf.pt, start_byte + j) == '%') {
                 i++;
                 continue;
             }
-
-            while (j < byte_count && (text[j] == '-' || text[j] == '+' || text[j] == ' ' || text[j] == '#' || text[j] == '0' || text[j] == '.' || text[j] == '*' || (text[j] >= '0' && text[j] <= '9')))
+            
+            char c = ptCharAt(&E.buf.pt, start_byte + j);
+            while (j < byte_count && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' || c == '.' || c == '*' || (c >= '0' && c <= '9'))) {
                 j++;
+                c = ptCharAt(&E.buf.pt, start_byte + j);
+            }
 
             if (j < byte_count && ((text[j] >= 'a' && text[j] <= 'z') || (text[j] >= 'A' && text[j] <= 'Z'))) {
                 TSNode node = ts_node_descendant_for_byte_range(root, start_byte + i, start_byte + i + 1);
@@ -1728,15 +1731,24 @@ void editorDrawRows(AppendBuffer *ab) {
     int last_row = E.view.row_offset + E.view.screen_rows;
     if (last_row > E.buf.num_lines) last_row = E.buf.num_lines;
     size_t end_byte = (last_row == E.buf.num_lines) ? E.buf.pt.logical_size : editorGetLogicalOffset(&E.buf, last_row, 0);
-
     size_t byte_count = end_byte - start_byte;
-    uint32_t *colors = safeMalloc(sizeof(uint32_t) * byte_count);
-    uint16_t *priorities = safeCalloc(byte_count, sizeof(uint16_t));
+
+    static uint32_t *colors = NULL;
+    static uint16_t *priorities = NULL;
+    static size_t color_cap = 0;
+    if (byte_count > color_cap) {
+        color_cap = byte_count + BUFFER_SIZE_PADDING;
+        colors = safeRealloc(colors, sizeof(uint32_t) * color_cap);
+        priorities = safeRealloc(priorities, sizeof(uint16_t) * color_cap);
+    }
+
     for (size_t i = 0; i < byte_count; i++)
         colors[i] = E.ts.default_fg;
+    memset(priorities, 0, sizeof(uint16_t) * byte_count);
 
     editorUpdateSyntaxColors(start_byte, end_byte, colors, priorities);
     highlightFormatSpecifiers(start_byte, end_byte, colors);
+    
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
         bool is_current_line = (file_row == E.cursor.y);
@@ -1753,9 +1765,6 @@ void editorDrawRows(AppendBuffer *ab) {
             abAppend(ab, RESET_BG_COLOR, sizeof(RESET_BG_COLOR) - 1);
         abAppend(ab, NEW_LINE, sizeof(NEW_LINE) - 1);
     }
-
-    free(colors);
-    free(priorities);
 }
 
 void editorSetStatusMsg(const char *msg) {
@@ -2422,12 +2431,9 @@ size_t editorGetLineLength(EditorBuffer *buf, int line_idx) {
         end_offset = buf->line_offsets[line_idx + 1] - 1;
 
     size_t len = end_offset - start_offset;
-    if (len > 0) {
-        char last_char;
-        ptReadLogical(&buf->pt, end_offset - 1, 1, &last_char);
-        if (last_char == '\r') len--;
-    }
-
+    if (len > 0)
+        if (ptCharAt(&buf->pt, end_offset - 1) == '\r')
+            len--;
     return len;
 }
 
@@ -4227,6 +4233,14 @@ void getEditorClipboardCmd() {
 }
 
 char *expandTabs(const char *input, size_t input_len, size_t *out_len) {
+    if (!memchr(input, '\t', input_len)) {
+        if (out_len) *out_len = input_len;
+        char *copy = safeMalloc(input_len + 1);
+        memcpy(copy, input, input_len);
+        copy[input_len] = '\0';
+        return copy;
+    }
+
     size_t required_size = 0;
     int col = 0;
     for (size_t i = 0; i < input_len; i++) {
