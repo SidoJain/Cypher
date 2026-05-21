@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.2"
+#define CYPHER_VERSION      "1.7.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -966,6 +966,9 @@ void editorProcessStandardKey(int ch) {
                 editorDeleteSelectedText();
                 editorInsertChar(ch);
 
+                int sel_start_x = E.cursor.x;
+                int sel_start_y = E.cursor.y;
+
                 bool was_pasting = E.sel.is_pasting;
                 E.sel.is_pasting = true;
                 for (int i = 0; i < selected_len; i++) {
@@ -975,8 +978,16 @@ void editorProcessStandardKey(int ch) {
                         editorInsertChar(selected[i]);
                 }
 
+                int sel_end_x = E.cursor.x;
+                int sel_end_y = E.cursor.y;
                 E.sel.is_pasting = was_pasting;
                 editorEndMacro();
+
+                E.sel.active = true;
+                E.sel.sx = sel_start_x;
+                E.sel.sy = sel_start_y;
+                E.sel.ex = sel_end_x;
+                E.sel.ey = sel_end_y;
 
                 if (!was_pasting)
                     editorParseTreeSitter();
@@ -1568,7 +1579,7 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
                 i++;
                 continue;
             }
-            
+
             char c = ptCharAt(&E.buf.pt, start_byte + j);
             while (j < byte_count && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' || c == '.' || c == '*' || (c >= '0' && c <= '9'))) {
                 j++;
@@ -1748,7 +1759,7 @@ void editorDrawRows(AppendBuffer *ab) {
 
     editorUpdateSyntaxColors(start_byte, end_byte, colors, priorities);
     highlightFormatSpecifiers(start_byte, end_byte, colors);
-    
+
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
         bool is_current_line = (file_row == E.cursor.y);
@@ -4713,8 +4724,8 @@ bool editorIsOffsetInStringOrComment(size_t offset) {
     const char *nodeType = ts_node_type(node);
     if (!nodeType) return false;
 
-    return (strstr(nodeType, "string") != NULL || 
-            strstr(nodeType, "comment") != NULL || 
+    return (strstr(nodeType, "string") != NULL ||
+            strstr(nodeType, "comment") != NULL ||
             strstr(nodeType, "char") != NULL);
 }
 
