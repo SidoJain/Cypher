@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.3"
+#define CYPHER_VERSION      "1.7.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -540,7 +540,7 @@ int main(int argc, char *argv[]) {
     } else if (argc >= 2 && strcmp(argv[1], "-") != 0) {
         editorOpen(argv[1]);
     } else {
-        ptInit(&E.buf.pt, "", 0);
+        ptInit(&E.buf.pt, safeStrdup(""), 0);
         editorUpdateLineOffsets(&E.buf);
     }
 
@@ -3913,7 +3913,7 @@ void editorOpen(const char *filename) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         if (errno == ENOENT) {
-            ptInit(&E.buf.pt, "", 0);
+            ptInit(&E.buf.pt, safeStrdup(""), 0);
             editorUpdateLineOffsets(&E.buf);
             E.buf.dirty = false;
             return;
@@ -3936,7 +3936,7 @@ void editorOpen(const char *filename) {
         ptInit(&E.buf.pt, expanded_buffer, expanded_len);
         free(buffer);
     } else {
-        ptInit(&E.buf.pt, "", 0);
+        ptInit(&E.buf.pt, safeStrdup(""), 0);
     }
 
     fclose(fp);
