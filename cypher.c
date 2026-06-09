@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.4"
+#define CYPHER_VERSION      "1.7.5"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -75,6 +75,9 @@
 #define HIDE_CURSOR             "\x1b[?25l"
 #define CURSOR_STEADY_BLOCK     "\x1b[6 q"
 #define CURSOR_DEFAULT          "\x1b[0 q"
+#define FG_DARK_GRAY            "\x1b[90m"
+#define FG_BRIGHT_WHITE         "\x1b[97m"
+#define FG_DEFAULT              "\x1b[39m"
 #define LIGHT_GRAY_BG_COLOR     "\x1b[48;2;60;60;60m"
 #define DARK_GRAY_BG_COLOR      "\x1b[48;2;15;15;15m"
 #define RESET_BG_COLOR          "\x1b[49m"
@@ -478,6 +481,7 @@ void getEditorClipboardCmd();
 char *expandTabs(const char *, size_t, size_t *);
 void editorTrimTrailingWhitespace();
 void editorUpdateWindowTitle();
+int editorGetGutterWidth();
 
 // memory
 void *safeMalloc(size_t);
@@ -841,6 +845,10 @@ int editorReadKey() {
                     y--;
                     bool motion = (b & 32) != 0;
                     if ((b & MOUSE_BTN_MASK) == 0) {
+                        int gutter_width = editorGetGutterWidth();
+                        x -= gutter_width;
+                        if (x < 0) x = 0;
+
                         E.cursor.x = x + E.view.col_offset;
                         E.cursor.y = y + E.view.row_offset;
                         if (!motion && seq[i] == 'M') return MOUSE_LEFT_CLICK;
@@ -1607,6 +1615,15 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
 
     size_t line_len = editorGetLineLength(&E.buf, file_row);
     bool is_current_line = (file_row == E.cursor.y);
+
+    int gutter_width = editorGetGutterWidth();
+    char gutter_buf[BUFFER_SIZE_32];
+    if (is_current_line)
+        snprintf(gutter_buf, sizeof(gutter_buf), FG_BRIGHT_WHITE "%*d " FG_DEFAULT, gutter_width - 1, file_row + 1);
+    else
+        snprintf(gutter_buf, sizeof(gutter_buf), FG_DARK_GRAY "%*d " FG_DEFAULT, gutter_width - 1, file_row + 1);
+    abAppend(ab, gutter_buf, strlen(gutter_buf));
+
     if (line_len == 0) {
         if (is_current_line)
             abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
@@ -1652,7 +1669,7 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
 
     int visible_len = r_len - E.view.col_offset;
     if (visible_len < 0) visible_len = 0;
-    if (visible_len > E.view.screen_cols) visible_len = E.view.screen_cols;
+    if (visible_len > E.view.screen_cols - gutter_width) visible_len = E.view.screen_cols - gutter_width;
 
     int sel_y1 = 0, sel_x1 = 0, sel_y2 = 0, sel_x2 = 0;
     editorGetNormalizedSelection(&sel_y1, &sel_x1, &sel_y2, &sel_x2);
@@ -1720,7 +1737,7 @@ void editorRefreshScreen() {
     editorDrawMsgBar(&ab);
 
     int draw_y = (E.cursor.y - E.view.row_offset) + 1;
-    int draw_x = (E.cursor.render_x - E.view.col_offset) + 1;
+    int draw_x = (E.cursor.render_x - E.view.col_offset) + 1 + editorGetGutterWidth();
     if (draw_y >= 1 && draw_y <= E.view.screen_rows && draw_x >= 1 && draw_x <= E.view.screen_cols) {
         char buf[BUFFER_SIZE_32];
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH", draw_y, draw_x);
@@ -1764,9 +1781,10 @@ void editorDrawRows(AppendBuffer *ab) {
         int file_row = y + E.view.row_offset;
         bool is_current_line = (file_row == E.cursor.y);
         if (file_row >= E.buf.num_lines) {
-            if (is_current_line)
-                abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
-            abAppend(ab, EMPTY_LINE_SYMBOL, sizeof(EMPTY_LINE_SYMBOL) - 1);
+            int gutter_width = editorGetGutterWidth();
+            char empty_gutter[BUFFER_SIZE_32];
+            snprintf(empty_gutter, sizeof(empty_gutter), FG_DARK_GRAY "%*s " FG_DEFAULT, gutter_width - 1, EMPTY_LINE_SYMBOL);
+            abAppend(ab, empty_gutter, strlen(empty_gutter));
         } else {
             editorDrawSingleRow(ab, file_row, start_byte, colors);
         }
@@ -1941,13 +1959,15 @@ void editorScroll() {
             E.view.row_offset = E.cursor.y - active_scrolloff;
             if (E.view.row_offset < 0) E.view.row_offset = 0;
         }
-
         if (E.cursor.y >= E.view.row_offset + E.view.screen_rows - active_scrolloff)
             E.view.row_offset = E.cursor.y - E.view.screen_rows + active_scrolloff + 1;
+
+        int gutter_width = editorGetGutterWidth();
+        int text_area_width = E.view.screen_cols - gutter_width;
         if (E.cursor.render_x < E.view.col_offset)
             E.view.col_offset = E.cursor.render_x;
-        if (E.cursor.render_x >= E.view.col_offset + E.view.screen_cols)
-            E.view.col_offset = E.cursor.render_x - E.view.screen_cols + 1;
+        if (E.cursor.render_x >= E.view.col_offset + text_area_width)
+            E.view.col_offset = E.cursor.render_x - text_area_width + 1;
     }
 }
 
@@ -4340,6 +4360,18 @@ void editorUpdateWindowTitle() {
         write(STDOUT_FILENO, display_name, strlen(display_name)) != -1 &&
         write(STDOUT_FILENO, OSC_FOOTER, sizeof(OSC_FOOTER) - 1) != -1)
         return;
+}
+
+int editorGetGutterWidth() {
+    int lines = E.buf.num_lines;
+    int digits = 0;
+    while (lines > 0) {
+        digits++;
+        lines /= 10;
+    }
+
+    if (digits < 3) digits = 3;
+    return digits + 1;
 }
 
 void *safeMalloc(size_t size) {
