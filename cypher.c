@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.5"
+#define CYPHER_VERSION      "1.7.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -1260,8 +1260,23 @@ bool editorProcessKeypress() {
         case ARROW_RIGHT:
         case ARROW_UP:
         case ARROW_DOWN:
-            E.sel.active = false;
-            editorMoveCursor(ch);
+            if (E.sel.active && (ch == ARROW_LEFT || ch == ARROW_RIGHT)) {
+                int sel_sy, sel_sx, sel_ey, sel_ex;
+                editorGetNormalizedSelection(&sel_sy, &sel_sx, &sel_ey, &sel_ex);
+                if (ch == ARROW_LEFT) {
+                    E.cursor.y = sel_sy;
+                    E.cursor.x = sel_sx;
+                } else {
+                    E.cursor.y = sel_ey;
+                    E.cursor.x = sel_ex;
+                }
+
+                E.cursor.preferred_x = E.cursor.x;
+                E.sel.active = false;
+            } else {
+                E.sel.active = false;
+                editorMoveCursor(ch);
+            }
             updateMatchBracket();
             break;
 
