@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.6"
+#define CYPHER_VERSION      "1.7.7"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -1188,10 +1188,12 @@ bool editorProcessKeypress() {
             break;
 
         case CTRL_ARROW_LEFT:
+            E.sel.active = false;
             editorMoveWordLeft();
             updateMatchBracket();
             break;
         case CTRL_ARROW_RIGHT:
+            E.sel.active = false;
             editorMoveWordRight();
             updateMatchBracket();
             break;
@@ -4104,7 +4106,7 @@ void editorHandleCrash(int signum) {
             path[i++] = *ext++;
         path[i] = '\0';
 
-        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, DEFAULT_FILE_PERMS);
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd != -1) {
             for (size_t j = 0; j < E.buf.pt.num_pieces; j++) {
                 Piece p = E.buf.pt.pieces[j];
