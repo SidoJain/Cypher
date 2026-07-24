@@ -1141,8 +1141,7 @@ bool editorProcessKeypress() {
             if (E.view.row_offset < 0) E.view.row_offset = 0;
             break;
 
-        case CTRL_KEY('/'):     // auto comment
-        case CTRL_SLASH:
+        case CTRL_SLASH:        // auto comment
             editorToggleComment();
             break;
 
@@ -4181,9 +4180,9 @@ void humanReadableSize(size_t bytes, char *buf, size_t bufsize) {
 void base64Encode(const char *src, int len, char *out) {
     int i, j;
     for (i = 0, j = 0; i < len; i += 3, j += 4) {
-        int v = src[i];
-        v = i + 1 < len ? v << 8 | src[i + 1] : v << 8;
-        v = i + 2 < len ? v << 8 | src[i + 2] : v << 8;
+        int v = (unsigned char)src[i];
+        v = i + 1 < len ? v << 8 | (unsigned char)src[i + 1] : v << 8;
+        v = i + 2 < len ? v << 8 | (unsigned char)src[i + 2] : v << 8;
 
         out[j] = base64_table[(v >> 18) & MASK_6BIT];
         out[j + 1] = base64_table[(v >> 12) & MASK_6BIT];
