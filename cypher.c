@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.7"
+#define CYPHER_VERSION      "1.7.8"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -186,6 +186,9 @@ typedef struct {
     size_t num_pieces;
     size_t piece_capacity;
     size_t logical_size;
+    size_t *piece_offsets;
+    size_t offsets_capacity;
+    bool offsets_dirty;
 } PieceTable;
 
 typedef struct {
@@ -355,9 +358,11 @@ bool editorEvaluateMatchPredicates(TSQueryMatch *);
 void editorApplyMatchColors(TSQueryMatch *, size_t, size_t, uint32_t *, uint16_t *);
 void editorUpdateSyntaxColors(size_t, size_t, uint32_t *, uint16_t *);
 void editorGetNormalizedSelection(int *, int *, int *, int *);
-bool editorIsCharInFindMatch(int, int);
+int editorFindFirstMatchOnRow(int);
+bool editorIsCharInFindMatch(int, int, int);
+void editorGetBracketSpan(int *, int *, int *, int *, bool *);
+bool editorIsCharInBracketSpan(int, int, int, int, int, int, bool);
 bool editorIsCharSelected(int, int, int, int, int, int);
-bool editorIsCharInBracket(int, int);
 void highlightFormatSpecifiers(size_t, size_t, uint32_t *);
 void editorDrawSingleRow(AppendBuffer *, int, size_t, uint32_t *);
 void editorRefreshScreen();
@@ -386,6 +391,7 @@ void ptFree(PieceTable *);
 void ptInsert(PieceTable *, size_t, const char *, size_t);
 void ptDelete(PieceTable *, size_t, size_t);
 void ptSquash(PieceTable *);
+void ptRebuildOffsets(PieceTable *);
 bool ptFindPiece(PieceTable *, size_t, size_t *, size_t *);
 void ptReadLogical(PieceTable *, size_t, size_t, char *);
 char ptCharAt(PieceTable *, size_t);
@@ -1512,10 +1518,9 @@ void editorGetNormalizedSelection(int *sy, int *sx, int *ey, int *ex) {
     }
 }
 
-bool editorIsCharInFindMatch(int file_row, int cx) {
-    if (!E.find.active || !E.find.query || E.find.num_matches == 0) return false;
+int editorFindFirstMatchOnRow(int file_row) {
+    if (!E.find.active || !E.find.query || E.find.num_matches == 0) return -1;
 
-    int query_len = strlen(E.find.query);
     int low = 0;
     int high = E.find.num_matches - 1;
     int first_match_idx = -1;
@@ -1530,13 +1535,49 @@ bool editorIsCharInFindMatch(int file_row, int cx) {
             high = mid - 1;
         }
     }
+    return first_match_idx;
+}
 
-    if (first_match_idx != -1) {
-        for (int i = first_match_idx; i < E.find.num_matches; i++) {
-            if (E.find.match_lines[i] != file_row) break;
-            if (cx >= E.find.match_cols[i] && cx < E.find.match_cols[i] + query_len) return true;
-        }
+bool editorIsCharInFindMatch(int file_row, int cx, int first_match_idx) {
+    if (first_match_idx < 0) return false;
+
+    int query_len = strlen(E.find.query);
+    for (int i = first_match_idx; i < E.find.num_matches; i++) {
+        if (E.find.match_lines[i] != file_row) break;
+        if (cx >= E.find.match_cols[i] && cx < E.find.match_cols[i] + query_len) return true;
     }
+    return false;
+}
+
+void editorGetBracketSpan(int *sy, int *sx, int *ey, int *ex, bool *active) {
+    *active = E.sys.has_bracket;
+    if (!E.sys.has_bracket) return;
+
+    int cy = E.cursor.y;
+    int cx = E.cursor.x;
+    char bracket = ptCharAt(&E.buf.pt, editorGetLogicalOffset(&E.buf, cy, cx));
+    if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
+        if (cx > 0)
+            cx--;
+
+    int by = E.sys.bracket_y;
+    int bx = E.sys.bracket_x;
+    if (cy > by || (cy == by && cx > bx)) {
+        int tmpx = cx, tmpy = cy;
+        cx = bx; cy = by;
+        bx = tmpx; by = tmpy;
+    }
+
+    *sy = cy; *sx = cx;
+    *ey = by; *ex = bx;
+}
+
+bool editorIsCharInBracketSpan(int file_row, int cx, int sy, int sx, int ey, int ex, bool active) {
+    if (!active) return false;
+    if (file_row > sy && file_row < ey) return true;
+    if (file_row == sy && file_row == ey && cx >= sx && cx <= ex) return true;
+    if (file_row == sy && file_row < ey && cx >= sx) return true;
+    if (file_row == ey && file_row > sy && cx <= ex) return true;
     return false;
 }
 
@@ -1547,35 +1588,6 @@ bool editorIsCharSelected(int file_row, int cx, int sel_y1, int sel_x1, int sel_
     if (file_row == sel_y1 && file_row == sel_y2 && cx >= sel_x1 && cx < sel_x2) return true;
     if (file_row == sel_y1 && file_row < sel_y2 && cx >= sel_x1) return true;
     if (file_row == sel_y2 && file_row > sel_y1 && cx < sel_x2) return true;
-
-    return false;
-}
-
-bool editorIsCharInBracket(int file_row, int cx) {
-    if (!E.sys.has_bracket) return false;
-
-    int sy = E.cursor.y;
-    int sx = E.cursor.x;
-    char bracket = ptCharAt(&E.buf.pt, editorGetLogicalOffset(&E.buf, sy, sx));
-    if (!(bracket == '(' || bracket == ')' || bracket == '{' || bracket == '}' || bracket == '[' || bracket == ']'))
-        if (sx > 0)
-            sx--;
-
-    int ey = E.sys.bracket_y;
-    int ex = E.sys.bracket_x;
-    if (sy > ey || (sy == ey && sx > ex)) {
-        int tmpx = sx;
-        int tmpy = sy;
-        sx = ex;
-        sy = ey;
-        ex = tmpx;
-        ey = tmpy;
-    }
-
-    if (file_row > sy && file_row < ey) return true;
-    if (file_row == sy && file_row == ey && cx >= sx && cx <= ex) return true;
-    if (file_row == sy && file_row < ey && cx >= sx) return true;
-    if (file_row == ey && file_row > sy && cx <= ex) return true;
 
     return false;
 }
@@ -1597,17 +1609,19 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
 
     TSNode root = ts_tree_root_node(E.ts.tree);
     for (size_t i = 0; i < byte_count - 1; i++) {
-        if (ptCharAt(&E.buf.pt, start_byte + i) == '%') {
+        if (text[i] == '%') {
             size_t j = i + 1;
-            if (ptCharAt(&E.buf.pt, start_byte + j) == '%') {
+            if (text[j] == '%') {
                 i++;
                 continue;
             }
 
-            char c = ptCharAt(&E.buf.pt, start_byte + j);
-            while (j < byte_count && (c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' || c == '.' || c == '*' || (c >= '0' && c <= '9'))) {
-                j++;
-                c = ptCharAt(&E.buf.pt, start_byte + j);
+            while (j < byte_count) {
+                char c = text[j];
+                if (c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' || c == '.' || c == '*' || (c >= '0' && c <= '9'))
+                    j++;
+                else
+                    break;
             }
 
             if (j < byte_count && ((text[j] >= 'a' && text[j] <= 'z') || (text[j] >= 'A' && text[j] <= 'Z'))) {
@@ -1690,6 +1704,11 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     int sel_y1 = 0, sel_x1 = 0, sel_y2 = 0, sel_x2 = 0;
     editorGetNormalizedSelection(&sel_y1, &sel_x1, &sel_y2, &sel_x2);
 
+    int brk_y1 = 0, brk_x1 = 0, brk_y2 = 0, brk_x2 = 0;
+    bool brk_active = false;
+    editorGetBracketSpan(&brk_y1, &brk_x1, &brk_y2, &brk_x2, &brk_active);
+    int find_first = editorFindFirstMatchOnRow(file_row);
+
     if (is_current_line)
         abAppend(ab, DARK_GRAY_BG_COLOR, sizeof(DARK_GRAY_BG_COLOR) - 1);
 
@@ -1712,8 +1731,8 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
         uint32_t color = colors[offset - start_byte];
 
         bool char_selected = editorIsCharSelected(file_row, cx, sel_y1, sel_x1, sel_y2, sel_x2);
-        bool in_bracket = editorIsCharInBracket(file_row, cx);
-        bool in_find = editorIsCharInFindMatch(file_row, cx);
+        bool in_bracket = editorIsCharInBracketSpan(file_row, cx, brk_y1, brk_x1, brk_y2, brk_x2, brk_active);
+        bool in_find = editorIsCharInFindMatch(file_row, cx, find_first);
 
         bool needs_bg = char_selected || in_bracket || in_find;
         if (needs_bg != current_inv) {
@@ -2198,6 +2217,9 @@ void ptInit(PieceTable *pt, const char *file_content, size_t content_len) {
     pt->add_len = 0;
     pt->piece_capacity = BUFFER_SIZE_128;
     pt->pieces = safeMalloc(sizeof(Piece) * pt->piece_capacity);
+    pt->piece_offsets = NULL;
+    pt->offsets_capacity = 0;
+    pt->offsets_dirty = true;
 
     if (content_len > 0) {
         pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, content_len};
@@ -2212,10 +2234,12 @@ void ptFree(PieceTable *pt) {
     free(pt->orig_buf);
     free(pt->add_buf);
     free(pt->pieces);
+    free(pt->piece_offsets);
 }
 
 void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) {
     if (text_len == 0 || offset > pt->logical_size) return;
+    pt->offsets_dirty = true;
 
     if (pt->add_len + text_len > pt->add_capacity) {
         while (pt->add_len + text_len > pt->add_capacity) pt->add_capacity *= 2;
@@ -2240,6 +2264,7 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
 
     size_t piece_idx = 0, piece_offset = 0;
     ptFindPiece(pt, offset, &piece_idx, &piece_offset);
+    pt->offsets_dirty = true;
     Piece target = pt->pieces[piece_idx];
 
     if (piece_offset == 0 && piece_idx > 0) {
@@ -2293,11 +2318,13 @@ void ptInsert(PieceTable *pt, size_t offset, const char *text, size_t text_len) 
 void ptDelete(PieceTable *pt, size_t offset, size_t len) {
     if (len == 0 || offset >= pt->logical_size) return;
     if (offset + len > pt->logical_size) len = pt->logical_size - offset;
+    pt->offsets_dirty = true;
 
     size_t start_idx, start_offset;
     size_t end_idx, end_offset;
     ptFindPiece(pt, offset, &start_idx, &start_offset);
     ptFindPiece(pt, offset + len, &end_idx, &end_offset);
+    pt->offsets_dirty = true;
 
     if (start_idx == end_idx) {
         Piece target = pt->pieces[start_idx];
@@ -2352,27 +2379,43 @@ void ptSquash(PieceTable *pt) {
     pt->add_len = 0;
     pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, pt->logical_size};
     pt->num_pieces = 1;
+    pt->offsets_dirty = true;
+}
+
+void ptRebuildOffsets(PieceTable *pt) {
+    if (pt->num_pieces + 1 > pt->offsets_capacity) {
+        pt->offsets_capacity = pt->piece_capacity + 1;
+        pt->piece_offsets = safeRealloc(pt->piece_offsets, sizeof(size_t) * pt->offsets_capacity);
+    }
+
+    size_t acc = 0;
+    for (size_t i = 0; i < pt->num_pieces; i++) {
+        pt->piece_offsets[i] = acc;
+        acc += pt->pieces[i].length;
+    }
+    pt->piece_offsets[pt->num_pieces] = acc;
+    pt->offsets_dirty = false;
 }
 
 bool ptFindPiece(PieceTable *pt, size_t offset, size_t *piece_idx, size_t *piece_offset) {
-    if (offset > pt->logical_size) return false;
+    if (offset > pt->logical_size || pt->num_pieces == 0) return false;
+    if (pt->offsets_dirty) ptRebuildOffsets(pt);
 
-    size_t current_offset = 0;
-    for (size_t i = 0; i < pt->num_pieces; i++) {
-        if (current_offset + pt->pieces[i].length > offset) {
-            *piece_idx = i;
-            *piece_offset = offset - current_offset;
-            return true;
-        }
-        current_offset += pt->pieces[i].length;
-    }
-
-    if (offset == pt->logical_size && pt->num_pieces > 0) {
+    if (offset == pt->logical_size) {
         *piece_idx = pt->num_pieces - 1;
         *piece_offset = pt->pieces[*piece_idx].length;
         return true;
     }
-    return false;
+
+    size_t lo = 1, hi = pt->num_pieces;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (pt->piece_offsets[mid] > offset) hi = mid;
+        else lo = mid + 1;
+    }
+    *piece_idx = lo - 1;
+    *piece_offset = offset - pt->piece_offsets[lo - 1];
+    return true;
 }
 
 void ptReadLogical(PieceTable *pt, size_t offset, size_t length, char *out_buf) {
@@ -2398,17 +2441,12 @@ void ptReadLogical(PieceTable *pt, size_t offset, size_t length, char *out_buf) 
 char ptCharAt(PieceTable *pt, size_t logical_pos) {
     if (logical_pos >= pt->logical_size) return '\0';
 
-    size_t current_pos = 0;
-    for (size_t i = 0; i < pt->num_pieces; i++) {
-        Piece *p = &pt->pieces[i];
-        if (current_pos + p->length > logical_pos) {
-            char *buf = (p->source == BUFFER_ORIGINAL) ? pt->orig_buf : pt->add_buf;
-            size_t offset_in_piece = logical_pos - current_pos;
-            return buf[p->start + offset_in_piece];
-        }
-        current_pos += p->length;
-    }
-    return '\0';
+    size_t piece_idx, piece_offset;
+    if (!ptFindPiece(pt, logical_pos, &piece_idx, &piece_offset)) return '\0';
+
+    Piece *p = &pt->pieces[piece_idx];
+    char *buf = (p->source == BUFFER_ORIGINAL) ? pt->orig_buf : pt->add_buf;
+    return buf[p->start + piece_offset];
 }
 
 void editorUpdateLineOffsets(EditorBuffer *buf) {
@@ -3240,6 +3278,7 @@ void editorBuildMatchList(const char *query) {
     size_t total_size = E.buf.pt.logical_size;
     if (total_size < (size_t)query_len) return;
 
+    int match_capacity = 0;
     size_t logical_pos = 0;
     for (size_t p_idx = 0; p_idx < E.buf.pt.num_pieces; p_idx++) {
         Piece p = E.buf.pt.pieces[p_idx];
@@ -3284,8 +3323,11 @@ void editorBuildMatchList(const char *query) {
             }
 
             if (match) {
-                E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * (E.find.num_matches + 1));
-                E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * (E.find.num_matches + 1));
+                if (E.find.num_matches >= match_capacity) {
+                    match_capacity = match_capacity == 0 ? BUFFER_SIZE_128 : match_capacity * 2;
+                    E.find.match_lines = safeRealloc(E.find.match_lines, sizeof(int) * match_capacity);
+                    E.find.match_cols = safeRealloc(E.find.match_cols, sizeof(int) * match_capacity);
+                }
 
                 int match_row, match_col;
                 editorOffsetToRowCol(&E.buf, logical_pos, &match_row, &match_col);
