@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.7.8"
+#define CYPHER_VERSION      "1.8.0"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -348,6 +348,7 @@ int getCursorPosition(int *, int *);
 
 // input parsing
 int editorReadByte(char *);
+static void editorConsumeEscapeTail(bool);
 int editorReadKey();
 void editorProcessStandardKey(int);
 bool editorProcessKeypress();
@@ -470,6 +471,7 @@ void editorMouseLeftRelease();
 void editorReadFromPipe(int, const char *);
 void editorOpen(const char *);
 void editorSave();
+void editorEmergencySave();
 void editorHandleCrash(int);
 
 // utility
@@ -484,7 +486,6 @@ int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
 void getEditorDirectory(char *, size_t);
 void getEditorClipboardCmd();
-char *expandTabs(const char *, size_t, size_t *);
 void editorTrimTrailingWhitespace();
 void editorUpdateWindowTitle();
 int editorGetGutterWidth();
@@ -728,9 +729,9 @@ void editorQuit() {
 }
 
 void die(const char *str) {
-    write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
+    disableRawMode();
+    editorEmergencySave();
     perror(str);
-    editorHandleCrash(SIGTERM);
     exit(1);
 }
 
@@ -755,7 +756,7 @@ void enableRawMode() {
 }
 
 void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.sys.orig_termios) == -1) die("tcsetattr");
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.sys.orig_termios);
     write(STDOUT_FILENO, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
     write(STDOUT_FILENO, CURSOR_DEFAULT, sizeof(CURSOR_DEFAULT) - 1);
     write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
@@ -820,6 +821,15 @@ int editorReadByte(char *c) {
     return 1;
 }
 
+static void editorConsumeEscapeTail(bool already_final) {
+    if (already_final) return;
+    char c;
+    for (int guard = 0; guard < BUFFER_SIZE_32; guard++) {
+        if (editorReadByte(&c) != 1) return;
+        if (c >= 0x40 && c <= 0x7E) return;
+    }
+}
+
 int editorReadKey() {
     char c;
     if (editorReadByte(&c) != 1) return 0;
@@ -872,7 +882,11 @@ int editorReadKey() {
                             if (seq[1] == '2' && seq[2] == '0' && seq3 == '0') return PASTE_START;
                             if (seq[1] == '2' && seq[2] == '0' && seq3 == '1') return PASTE_END;
                         }
+                        editorConsumeEscapeTail(seq4 >= 0x40 && seq4 <= 0x7E);
+                        return ESCAPE_CHAR;
                     }
+                    editorConsumeEscapeTail(seq3 >= 0x40 && seq3 <= 0x7E);
+                    return ESCAPE_CHAR;
                 }
                 if (seq[2] == ';') {
                     if (editorReadByte(&seq[3]) != 1) return ESCAPE_CHAR;
@@ -913,6 +927,8 @@ int editorReadKey() {
                             case 'H': return SHIFT_HOME;
                         }
                     }
+                    editorConsumeEscapeTail(seq[4] >= 0x40 && seq[4] <= 0x7E);
+                    return ESCAPE_CHAR;
                 } else if (seq[2] == EMPTY_LINE_SYMBOL[0]) {
                     switch (seq[1]) {
                         case '1': return HOME_KEY;
@@ -923,7 +939,10 @@ int editorReadKey() {
                         case '7': return HOME_KEY;
                         case '8': return END_KEY;
                     }
+                    return ESCAPE_CHAR;
                 }
+                editorConsumeEscapeTail(seq[2] >= 0x40 && seq[2] <= 0x7E);
+                return ESCAPE_CHAR;
             } else {
                 switch (seq[1]) {
                     case 'A': return ARROW_UP;
@@ -946,6 +965,7 @@ int editorReadKey() {
                         return ESCAPE_CHAR;
                     }
                 }
+                return ESCAPE_CHAR;
             }
         } else if (seq[0] == 'O') {
             switch (seq[1]) {
@@ -956,6 +976,7 @@ int editorReadKey() {
                 case 'H': return HOME_KEY;
                 case 'F': return END_KEY;
             }
+            return ESCAPE_CHAR;
         }
 
         return ESCAPE_CHAR;
@@ -1037,13 +1058,14 @@ bool editorProcessKeypress() {
 
     if (E.sel.is_pasting && ch != PASTE_END) {
         if (ch == '\r') ch = '\n';
+        if (ch < 0 || ch > 255) return true;
 
         if ((size_t)E.sel.paste_len + 1 >= E.sel.paste_capacity) {
             E.sel.paste_capacity = E.sel.paste_capacity == 0 ? BUFFER_SIZE_1024 : E.sel.paste_capacity * 2;
             E.sel.paste_buf = safeRealloc(E.sel.paste_buf, E.sel.paste_capacity);
         }
 
-        E.sel.paste_buf[E.sel.paste_len++] = ch;
+        E.sel.paste_buf[E.sel.paste_len++] = (char)ch;
         return true;
     }
 
@@ -2353,15 +2375,14 @@ void ptDelete(PieceTable *pt, size_t offset, size_t len) {
         pt->pieces[end_idx].start += end_offset;
         pt->pieces[end_idx].length -= end_offset;
 
-        size_t pieces_to_remove = (end_idx - start_idx) - 1;
-        if (pt->pieces[end_idx].length == 0) pieces_to_remove++;
-        if (pt->pieces[start_idx].length == 0) {
-            pieces_to_remove++;
-            start_idx--;
-        }
+        size_t remove_from = start_idx + 1;
+        size_t remove_to = end_idx;
+        if (pt->pieces[end_idx].length == 0) remove_to++;
+        if (pt->pieces[start_idx].length == 0) remove_from--;
 
+        size_t pieces_to_remove = remove_to - remove_from;
         if (pieces_to_remove > 0) {
-            memmove(&pt->pieces[start_idx + 1], &pt->pieces[start_idx + pieces_to_remove + 1], sizeof(Piece) * (pt->num_pieces - (start_idx + pieces_to_remove + 1)));
+            memmove(&pt->pieces[remove_from], &pt->pieces[remove_to], sizeof(Piece) * (pt->num_pieces - remove_to));
             pt->num_pieces -= pieces_to_remove;
         }
     }
@@ -3972,12 +3993,7 @@ void editorReadFromPipe(int fd, const char *filename) {
     }
     buffer[len] = '\0';
 
-    size_t expanded_len;
-    char *expanded_buffer = expandTabs(buffer, len, &expanded_len);
-
-    ptInit(&E.buf.pt, expanded_buffer, expanded_len);
-    free(expanded_buffer);
-    free(buffer);
+    ptInit(&E.buf.pt, buffer, len);
     editorUpdateLineOffsets(&E.buf);
 
     E.buf.dirty = true;
@@ -4008,11 +4024,7 @@ void editorOpen(const char *filename) {
         size_t read_size = fread(buffer, 1, file_size, fp);
         buffer[read_size] = '\0';
 
-        size_t expanded_len;
-        char *expanded_buffer = expandTabs(buffer, read_size, &expanded_len);
-
-        ptInit(&E.buf.pt, expanded_buffer, expanded_len);
-        free(buffer);
+        ptInit(&E.buf.pt, buffer, read_size);
     } else {
         ptInit(&E.buf.pt, safeStrdup(""), 0);
     }
@@ -4060,23 +4072,27 @@ void editorSave() {
         target_filename = realpath(E.buf.filename, NULL);
     const char *actual_filename = target_filename ? target_filename : E.buf.filename;
 
-    size_t len = strlen(E.buf.filename) + 5;
-    char *tmp_filename = safeMalloc(len);
-    snprintf(tmp_filename, len, "%s.tmp", E.buf.filename);
+    size_t dir_len = strlen(actual_filename);
+    while (dir_len > 0 && actual_filename[dir_len - 1] != '/') dir_len--;
+
+    size_t tmp_len = dir_len + BUFFER_SIZE_PADDING;
+    char *tmp_filename = safeMalloc(tmp_len);
+    snprintf(tmp_filename, tmp_len, "%.*s.cypher-tmp-%d", (int)dir_len, actual_filename, (int)getpid());
 
     mode_t file_mode = DEFAULT_FILE_PERMS;
     struct stat st;
-    if (stat(actual_filename, &st) == 0) file_mode = st.st_mode; // keep existing permissions
+    if (stat(actual_filename, &st) == 0) file_mode = st.st_mode & 07777;    // keep existing perms only
     int fd = open(tmp_filename,
-                  O_RDWR  |     // read and write
-                  O_CREAT |     // create if doesn't exist
-                  O_TRUNC,      // clear the file
+                  O_WRONLY |    // write only
+                  O_CREAT  |    // create
+                  O_EXCL,       // fail if it already exists
                   file_mode);   // permissions
     if (fd == -1) {
-        free(tmp_filename);
         char msg[STATUS_LENGTH];
         snprintf(msg, sizeof(msg), "Can't save! I/O error: %s", strerror(errno));
         editorSetStatusMsg(msg);
+        free(tmp_filename);
+        free(target_filename);
         return;
     }
 
@@ -4111,6 +4127,24 @@ void editorSave() {
             unlink(tmp_filename);
             editorSetStatusMsg("Save failed! Could not rename tmp file.");
         } else {
+            char dir_path[PATH_MAX];
+            size_t dlen = strlen(actual_filename);
+            while (dlen > 0 && actual_filename[dlen - 1] != '/')
+                dlen--;
+
+            if (dlen == 0) {
+                dir_path[0] = '.';
+                dir_path[1] = '\0';
+            } else {
+                snprintf(dir_path, sizeof(dir_path), "%.*s", (int)dlen, actual_filename);
+            }
+
+            int dfd = open(dir_path, O_RDONLY | O_DIRECTORY);
+            if (dfd != -1) {
+                fsync(dfd);
+                close(dfd);
+            }
+
             E.buf.dirty = false;
             E.buf.quit_times = QUIT_TIMES;
             history.save_point = history.undo_top;
@@ -4134,31 +4168,40 @@ void editorSave() {
     free(target_filename);
 }
 
-void editorHandleCrash(int signum) {
-    if (E.buf.dirty && E.buf.pt.pieces) {
-        char path[PATH_MAX];
-        size_t i = 0;
-        const char *ext = "_tmp.txt";
-        const char *name = E.buf.filename ? E.buf.filename : "untitled";
-        while (*name && i < sizeof(path) - strlen(ext))
-            path[i++] = *name++;
+void editorEmergencySave() {
+    if (!(E.buf.dirty && E.buf.pt.pieces)) return;
 
-        while (*ext && i < sizeof(path) - 1)
-            path[i++] = *ext++;
-        path[i] = '\0';
+    char path[PATH_MAX];
+    size_t i = 0;
+    const char *ext = "_tmp.txt";
+    const char *name = E.buf.filename ? E.buf.filename : "untitled";
+    while (*name && i < sizeof(path) - strlen(ext))
+        path[i++] = *name++;
 
-        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-        if (fd != -1) {
-            for (size_t j = 0; j < E.buf.pt.num_pieces; j++) {
-                Piece p = E.buf.pt.pieces[j];
-                if (p.length == 0) continue;
+    while (*ext && i < sizeof(path) - 1)
+        path[i++] = *ext++;
+    path[i] = '\0';
 
-                char *source = (p.source == BUFFER_ORIGINAL) ? E.buf.pt.orig_buf : E.buf.pt.add_buf;
-                write(fd, source + p.start, p.length);
-            }
-            close(fd);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd != -1) {
+        for (size_t j = 0; j < E.buf.pt.num_pieces; j++) {
+            Piece p = E.buf.pt.pieces[j];
+            if (p.length == 0) continue;
+
+            char *source = (p.source == BUFFER_ORIGINAL) ? E.buf.pt.orig_buf : E.buf.pt.add_buf;
+            write(fd, source + p.start, p.length);
         }
+        close(fd);
     }
+}
+
+void editorHandleCrash(int signum) {
+    write(STDOUT_FILENO, EXIT_ALTERNATE_SCREEN, sizeof(EXIT_ALTERNATE_SCREEN) - 1);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.sys.orig_termios);
+    write(STDOUT_FILENO, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
+    write(STDOUT_FILENO, DISABLE_MOUSE, sizeof(DISABLE_MOUSE) - 1);
+
+    editorEmergencySave();
 
     signal(signum, SIG_DFL);
     raise(signum);
@@ -4319,53 +4362,6 @@ void getEditorClipboardCmd() {
         else if (getenv("DISPLAY"))
             E.sys.clipboard_cmd = "xclip -selection clipboard 2>/dev/null";
     }
-}
-
-char *expandTabs(const char *input, size_t input_len, size_t *out_len) {
-    if (!memchr(input, '\t', input_len)) {
-        if (out_len) *out_len = input_len;
-        char *copy = safeMalloc(input_len + 1);
-        memcpy(copy, input, input_len);
-        copy[input_len] = '\0';
-        return copy;
-    }
-
-    size_t required_size = 0;
-    int col = 0;
-    for (size_t i = 0; i < input_len; i++) {
-        if (input[i] == '\t') {
-            int spaces = TAB_SIZE - (col % TAB_SIZE);
-            required_size += spaces;
-            col += spaces;
-        } else if (input[i] == '\n' || input[i] == '\r') {
-            required_size++;
-            col = 0;
-        } else {
-            required_size++;
-            col++;
-        }
-    }
-
-    char *expanded = safeMalloc(required_size + 1);
-    size_t j = 0;
-    col = 0;
-    for (size_t i = 0; i < input_len; i++) {
-        if (input[i] == '\t') {
-            int spaces = TAB_SIZE - (col % TAB_SIZE);
-            for (int s = 0; s < spaces; s++) expanded[j++] = ' ';
-            col += spaces;
-        } else if (input[i] == '\n' || input[i] == '\r') {
-            expanded[j++] = input[i];
-            col = 0;
-        } else {
-            expanded[j++] = input[i];
-            col++;
-        }
-    }
-    expanded[j] = '\0';
-    if (out_len) *out_len = j;
-
-    return expanded;
 }
 
 void editorTrimTrailingWhitespace() {
