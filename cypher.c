@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.0"
+#define CYPHER_VERSION      "1.8.1"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -415,6 +415,7 @@ void editorMoveRowUp();
 void editorMoveRowDown();
 void editorCopyRowUp();
 void editorCopyRowDown();
+void editorIndentSelection();
 void editorInsertTab();
 void editorMoveToLineStart();
 void editorMoveToLineEnd();
@@ -1182,7 +1183,10 @@ bool editorProcessKeypress() {
             break;
 
         case '\t':              // tab
-            editorInsertTab();
+            if (E.sel.active)
+                editorIndentSelection(true);
+            else
+                editorInsertTab();
             break;
 
         case HOME_KEY:
@@ -2921,6 +2925,35 @@ void editorCopyRowDown() {
 
     free(current_text);
     E.buf.dirty = true;
+}
+
+void editorIndentSelection() {
+    int start_y, sx, end_y, ex;
+    editorGetNormalizedSelection(&start_y, &sx, &end_y, &ex);
+
+    if (ex == 0 && end_y > start_y)
+        end_y--;
+
+    if (start_y < 0) start_y = 0;
+    if (end_y >= E.buf.num_lines) end_y = E.buf.num_lines - 1;
+
+    editorBeginMacro();
+    for (int y = start_y; y <= end_y; y++) {
+        char spaces[TAB_SIZE];
+        memset(spaces, ' ', TAB_SIZE);
+        size_t offset = editorGetLogicalOffset(&E.buf, y, 0);
+        executeInsert(offset, spaces, TAB_SIZE);
+    }
+    editorEndMacro();
+
+    E.cursor.x += TAB_SIZE;
+    E.cursor.preferred_x = E.cursor.x;
+    if (E.sel.active) {
+        E.sel.sx += TAB_SIZE;
+        E.sel.ex += TAB_SIZE;
+    }
+
+    updateMatchBracket();
 }
 
 void editorInsertTab() {
