@@ -28,11 +28,11 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.1"
+#define CYPHER_VERSION      "1.8.2"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
-#define is_cntrl(k)         ((k) < 32 || (k) == 127)
+#define is_cntrl(k)         (((unsigned char)(k)) < 32 || ((unsigned char)(k)) == 127)
 #define is_alnum(k)         (((k) >= 'a' && (k) <= 'z') || ((k) >= 'A' && (k) <= 'Z') || ((k) >= '0' && (k) <= '9'))
 #define RGB_RED(c)          (((c) >> 16) & MASK_8BIT)
 #define RGB_GREEN(c)        (((c) >> 8) & MASK_8BIT)
@@ -482,6 +482,11 @@ char getClosingChar(char);
 void clampCursorPosition();
 void humanReadableSize(size_t, char *, size_t);
 void base64Encode(const char *, int, char *);
+bool utf8IsCont(unsigned char);
+int utf8SeqLen(unsigned char);
+uint32_t utf8Decode(const char *, int, int, int *);
+int utf8CodepointWidth(uint32_t);
+int utf8CharWidth(const char *, int, int, int *);
 int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
@@ -1059,7 +1064,7 @@ bool editorProcessKeypress() {
 
     if (E.sel.is_pasting && ch != PASTE_END) {
         if (ch == '\r') ch = '\n';
-        if (ch < 0 || ch > 255) return true;
+        if (ch > 255) return true;
 
         if ((size_t)E.sel.paste_len + 1 >= E.sel.paste_capacity) {
             E.sel.paste_capacity = E.sel.paste_capacity == 0 ? BUFFER_SIZE_1024 : E.sel.paste_capacity * 2;
@@ -2037,10 +2042,13 @@ void editorMoveCursor(int key) {
         return;
 
     int current_line_len = editorGetLineLength(&E.buf, E.cursor.y);
+    size_t line_start = (E.cursor.y < E.buf.num_lines) ? E.buf.line_offsets[E.cursor.y] : 0;
     switch (key) {
         case ARROW_LEFT:
             if (E.cursor.x != 0) {
                 E.cursor.x--;
+                while (E.cursor.x > 0 && utf8IsCont((unsigned char)ptCharAt(&E.buf.pt, line_start + E.cursor.x)))
+                    E.cursor.x--;
             } else if (E.cursor.y > 0) {
                 E.cursor.y--;
                 E.cursor.x = editorGetLineLength(&E.buf, E.cursor.y);
@@ -2050,7 +2058,8 @@ void editorMoveCursor(int key) {
 
         case ARROW_RIGHT:
             if (E.cursor.x < current_line_len) {
-                E.cursor.x++;
+                E.cursor.x += utf8SeqLen((unsigned char)ptCharAt(&E.buf.pt, line_start + E.cursor.x));
+                if (E.cursor.x > current_line_len) E.cursor.x = current_line_len;
             } else if (E.cursor.x == current_line_len && E.cursor.y < E.buf.num_lines - 1) {
                 E.cursor.y++;
                 E.cursor.x = 0;
@@ -2086,6 +2095,12 @@ void editorMoveCursor(int key) {
     current_line_len = editorGetLineLength(&E.buf, E.cursor.y);
     if (E.cursor.x > current_line_len)
         E.cursor.x = current_line_len;
+
+    if (E.cursor.y < E.buf.num_lines) {
+        size_t ls = E.buf.line_offsets[E.cursor.y];
+        while (E.cursor.x > 0 && utf8IsCont((unsigned char)ptCharAt(&E.buf.pt, ls + E.cursor.x)))
+            E.cursor.x--;
+    }
 }
 
 void editorMoveWordLeft() {
@@ -2708,6 +2723,13 @@ size_t editorGetDeleteSize(size_t offset) {
         }
     }
 
+    if (utf8IsCont((unsigned char)prev_char)) {
+        size_t n = 1;
+        while (offset - n > 0 && utf8IsCont((unsigned char)ptCharAt(&E.buf.pt, offset - n)))
+            n++;
+        return n;
+    }
+
     return 1;
 }
 
@@ -2723,20 +2745,28 @@ void editorDeleteChar(DeleteDirection dir) {
     if (dir == DELETE_BACKWARD) {
         if (E.cursor.x == 0 && E.cursor.y == 0) return;
 
-        size_t delete_len = editorGetDeleteSize(offset);
-        int prev_line_len = 0;
-        if (E.cursor.x == 0)
-            prev_line_len = editorGetLineLength(&E.buf, E.cursor.y - 1);
+        char prev_char = ptCharAt(&E.buf.pt, offset - 1);
+        char next_char = (offset < E.buf.pt.logical_size) ? ptCharAt(&E.buf.pt, offset) : '\0';
+        char expected_closing = getClosingChar(prev_char);
+        bool auto_pair = (E.cursor.x > 0 && expected_closing != 0 && expected_closing == next_char);
 
-        executeDelete(offset - (delete_len == 2 ? 1 : delete_len), delete_len);
-        if (E.cursor.x == 0) {
+        if (auto_pair) {
+            executeDelete(offset - 1, 2);
+            E.cursor.x -= 1;
+        } else if (E.cursor.x == 0) {
+            int prev_line_len = editorGetLineLength(&E.buf, E.cursor.y - 1);
+            executeDelete(offset - 1, 1);
             E.cursor.y--;
             E.cursor.x = prev_line_len;
         } else {
-            E.cursor.x -= (delete_len == 2) ? 1 : (int)delete_len;
+            size_t delete_len = editorGetDeleteSize(offset);
+            executeDelete(offset - delete_len, delete_len);
+            E.cursor.x -= (int)delete_len;
         }
     } else if (offset < E.buf.pt.logical_size) {
-        executeDelete(offset, 1);
+        int seq_len = utf8SeqLen((unsigned char)ptCharAt(&E.buf.pt, offset));
+        if (offset + seq_len > E.buf.pt.logical_size) seq_len = 1;
+        executeDelete(offset, seq_len);
     }
 
     E.cursor.preferred_x = E.cursor.x;
@@ -2928,17 +2958,17 @@ void editorCopyRowDown() {
 }
 
 void editorIndentSelection() {
-    int start_y, sx, end_y, ex;
-    editorGetNormalizedSelection(&start_y, &sx, &end_y, &ex);
+    int sy, sx, ey, ex;
+    editorGetNormalizedSelection(&sy, &sx, &ey, &ex);
 
-    if (ex == 0 && end_y > start_y)
-        end_y--;
+    if (ex == 0 && ey > sy)
+        ey--;
 
-    if (start_y < 0) start_y = 0;
-    if (end_y >= E.buf.num_lines) end_y = E.buf.num_lines - 1;
+    if (sy < 0) sy = 0;
+    if (ey >= E.buf.num_lines) ey = E.buf.num_lines - 1;
 
     editorBeginMacro();
-    for (int y = start_y; y <= end_y; y++) {
+    for (int y = sy; y <= ey; y++) {
         char spaces[TAB_SIZE];
         memset(spaces, ' ', TAB_SIZE);
         size_t offset = editorGetLogicalOffset(&E.buf, y, 0);
@@ -4241,6 +4271,7 @@ void editorHandleCrash(int signum) {
 }
 
 bool isWordChar(int ch) {
+    if ((unsigned char)ch >= 0x80) return true;
     return is_alnum(ch) || ch == '_';
 }
 
@@ -4312,26 +4343,94 @@ void base64Encode(const char *src, int len, char *out) {
     out[j] = '\0';
 }
 
+bool utf8IsCont(unsigned char b) {
+    return (b & 0xC0) == 0x80;
+}
+
+int utf8SeqLen(unsigned char b) {
+    if (b < 0x80) return 1;
+    if ((b & 0xE0) == 0xC0) return 2;
+    if ((b & 0xF0) == 0xE0) return 3;
+    if ((b & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+uint32_t utf8Decode(const char *chars, int i, int size, int *seq_len) {
+    unsigned char b = (unsigned char)chars[i];
+    int len = utf8SeqLen(b);
+    if (i + len > size) len = 1;
+
+    uint32_t cp;
+    if (len == 1) cp = b;
+    else if (len == 2) cp = b & 0x1F;
+    else if (len == 3) cp = b & 0x0F;
+    else cp = b & 0x07;
+
+    for (int k = 1; k < len; k++) {
+        unsigned char cont = (unsigned char)chars[i + k];
+        if (!utf8IsCont(cont)) { len = 1; cp = b; break; }
+        cp = (cp << 6) | (cont & 0x3F);
+    }
+    *seq_len = len;
+    return cp;
+}
+
+int utf8CodepointWidth(uint32_t cp) {
+    if (cp == 0) return 0;
+    if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x200B && cp <= 0x200F) ||
+        (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
+        (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF))
+        return 0;
+    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E) ||
+        (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
+        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF) ||
+        (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+        (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+        (cp >= 0x20000 && cp <= 0x3FFFD))
+        return 2;
+    return 1;
+}
+
+int utf8CharWidth(const char *chars, int i, int size, int *seq_len) {
+    if (chars[i] == '\t') { *seq_len = 1; return 1; }
+    uint32_t cp = utf8Decode(chars, i, size, seq_len);
+    if (cp < 0x20) return 1;
+    return utf8CodepointWidth(cp);
+}
+
 int editorLineCxToRx(const char *chars, int size, int cursor_x) {
     int render_x = 0;
-    for (int i = 0; i < cursor_x && i < size; i++) {
-        if (chars[i] == '\t')
-            render_x += (TAB_SIZE - 1) - (render_x % TAB_SIZE);
-        render_x++;
+    int i = 0;
+    while (i < cursor_x && i < size) {
+        if (chars[i] == '\t') {
+            render_x += TAB_SIZE - (render_x % TAB_SIZE);
+            i++;
+        } else {
+            int seq_len;
+            render_x += utf8CharWidth(chars, i, size, &seq_len);
+            i += seq_len;
+        }
     }
     return render_x;
 }
 
 int editorLineRxToCx(const char *chars, int size, int render_x) {
     int cur_render_x = 0;
-    int cursor_x;
-    for (cursor_x = 0; cursor_x < size; cursor_x++) {
-        if (chars[cursor_x] == '\t')
-            cur_render_x += (TAB_SIZE - 1) - (cur_render_x % TAB_SIZE);
-        cur_render_x++;
-        if (cur_render_x > render_x) return cursor_x;
+    int i = 0;
+    while (i < size) {
+        int advance, seq_len;
+        if (chars[i] == '\t') {
+            advance = TAB_SIZE - (cur_render_x % TAB_SIZE);
+            seq_len = 1;
+        } else {
+            advance = utf8CharWidth(chars, i, size, &seq_len);
+        }
+        if (cur_render_x + advance > render_x) return i;
+        cur_render_x += advance;
+        i += seq_len;
     }
-    return cursor_x;
+    return i;
 }
 
 char *editorReadFileIntoString(const char *filepath) {
