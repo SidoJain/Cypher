@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.3"
+#define CYPHER_VERSION      "1.8.4"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -2495,7 +2495,21 @@ void ptSquash(PieceTable *pt) {
     free(pt->orig_buf);
 
     pt->orig_buf = new_orig_buf;
+
+    free(pt->add_buf);
+    pt->add_capacity = BUFFER_SIZE_1024;
+    pt->add_buf = safeMalloc(pt->add_capacity);
     pt->add_len = 0;
+
+    if (pt->piece_capacity > BUFFER_SIZE_128) {
+        pt->piece_capacity = BUFFER_SIZE_128;
+        pt->pieces = safeRealloc(pt->pieces, sizeof(Piece) * pt->piece_capacity);
+    }
+    if (pt->offsets_capacity > BUFFER_SIZE_128 + 1) {
+        pt->offsets_capacity = BUFFER_SIZE_128 + 1;
+        pt->piece_offsets = safeRealloc(pt->piece_offsets, sizeof(size_t) * pt->offsets_capacity);
+    }
+
     pt->pieces[0] = (Piece){BUFFER_ORIGINAL, 0, pt->logical_size};
     pt->num_pieces = 1;
     pt->offsets_dirty = true;
