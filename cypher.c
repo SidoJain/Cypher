@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.2"
+#define CYPHER_VERSION      "1.8.3"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -99,6 +99,22 @@
 #define MASK_8BIT               0xFF
 #define MASK_6BIT               0x3F
 #define MOUSE_BTN_MASK          3
+
+#define UTF8_ASCII_MAX          0x7F
+#define UTF8_CONT_MASK          0xC0
+#define UTF8_CONT_MARK          0x80
+#define UTF8_CONT_PAYLOAD       0x3F
+#define UTF8_CONT_SHIFT         6
+#define UTF8_LEAD2_MASK         0xE0
+#define UTF8_LEAD2_MARK         0xC0
+#define UTF8_LEAD3_MASK         0xF0
+#define UTF8_LEAD3_MARK         0xE0
+#define UTF8_LEAD4_MASK         0xF8
+#define UTF8_LEAD4_MARK         0xF0
+#define UTF8_LEAD2_PAYLOAD      0x1F
+#define UTF8_LEAD3_PAYLOAD      0x0F
+#define UTF8_LEAD4_PAYLOAD      0x07
+#define UTF8_FIRST_PRINTABLE    0x20
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -324,9 +340,18 @@ typedef struct {
     int save_point;
 } EditorUndoRedo;
 
+typedef struct {
+    char *b;
+    int len;
+    int capacity;
+    bool valid;
+} RowCache;
+
 /*** Global Data ***/
 
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static RowCache *g_prev_frame = NULL;
+static int g_prev_frame_rows = 0;
 EditorConfig E;
 EditorUndoRedo history;
 
@@ -373,6 +398,7 @@ void editorDrawStatusBar(AppendBuffer *);
 void editorDrawMsgBar(AppendBuffer *);
 void editorDrawWelcomeMessage(AppendBuffer *);
 void editorManualScreen();
+void editorInvalidateFrameCache();
 void editorScroll();
 
 // cursor
@@ -571,6 +597,8 @@ int main(int argc, char *argv[]) {
             E.view.resized = 0;
             if (getWindowSize(&E.view.screen_rows, &E.view.screen_cols) == -1) die("getWindowSize");
             E.view.screen_rows -= UI_RESERVED_ROWS;
+            if (write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET, sizeof(CLEAR_SCREEN CURSOR_RESET) - 1) == -1) {}
+            editorInvalidateFrameCache();
             needs_refresh = true;
         }
 
@@ -1671,8 +1699,6 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
 void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint32_t *colors) {
     static char *line_text = NULL;
     static size_t line_cap = 0;
-    static char *render = NULL;
-    static size_t render_cap = 0;
 
     size_t line_len = editorGetLineLength(&E.buf, file_row);
     bool is_current_line = (file_row == E.cursor.y);
@@ -1703,35 +1729,6 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     size_t line_start_byte = E.buf.line_offsets[file_row];
     ptReadLogical(&E.buf.pt, line_start_byte, line_len, line_text);
 
-    int tabs = 0;
-    for (size_t i = 0; i < line_len; i++) if (line_text[i] == '\t') tabs++;
-    size_t required_render_len = line_len + tabs * (TAB_SIZE - 1) + 1;
-    if (required_render_len > render_cap) {
-        if (render_cap == 0) render_cap = ALLOC_PADDING;
-        while (render_cap < required_render_len) {
-            if (render_cap < GROWTH_THRESHOLD) render_cap *= 2;
-            else render_cap += GROWTH_STEP;
-        }
-        render = safeRealloc(render, render_cap);
-    }
-
-    int r_len = 0;
-    for (size_t i = 0; i < line_len; i++) {
-        if (line_text[i] == '\t') {
-            render[r_len++] = ' ';
-            while (r_len % TAB_SIZE != 0) render[r_len++] = ' ';
-        } else if (is_cntrl((unsigned char)line_text[i])) {
-            render[r_len++] = '?';
-        } else {
-            render[r_len++] = line_text[i];
-        }
-    }
-    render[r_len] = '\0';
-
-    int visible_len = r_len - E.view.col_offset;
-    if (visible_len < 0) visible_len = 0;
-    if (visible_len > E.view.screen_cols - gutter_width) visible_len = E.view.screen_cols - gutter_width;
-
     int sel_y1 = 0, sel_x1 = 0, sel_y2 = 0, sel_x2 = 0;
     editorGetNormalizedSelection(&sel_y1, &sel_x1, &sel_y2, &sel_x2);
 
@@ -1746,18 +1743,37 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
     uint32_t current_fg = DEFAULT_FG_COLOR_HEX;
     bool current_inv = false;
 
-    int current_cx = editorLineRxToCx(line_text, line_len, E.view.col_offset);
-    int current_rx = editorLineCxToRx(line_text, line_len, current_cx);
-    for (int j = 0; j < visible_len; j++) {
-        int rx = j + E.view.col_offset;
-        while ((size_t)current_cx < line_len) {
-            int char_width = (line_text[current_cx] == '\t') ? (TAB_SIZE - (current_rx % TAB_SIZE)) : 1;
-            if (rx < current_rx + char_width) break;
-            current_rx += char_width;
-            current_cx++;
+    int text_area = E.view.screen_cols - gutter_width;
+    int rx = 0;
+    int cx = 0;
+
+    while ((size_t)cx < line_len) {
+        int seq_len, cell_width, cell_bytes;
+        char cell[8];
+
+        if (line_text[cx] == '\t') {
+            seq_len = 1;
+            cell_width = TAB_SIZE - (rx % TAB_SIZE);
+            cell[0] = ' ';
+            cell_bytes = 1;
+        } else if (is_cntrl((unsigned char)line_text[cx])) {
+            seq_len = 1;
+            cell_width = 1;
+            cell[0] = '?';
+            cell_bytes = 1;
+        } else {
+            cell_width = utf8CharWidth(line_text, cx, line_len, &seq_len);
+            cell_bytes = seq_len;
+            memcpy(cell, &line_text[cx], seq_len);
+            if (cell_width == 0) {
+                cx += seq_len;
+                continue;
+            }
         }
 
-        int cx = current_cx;
+        if (rx + cell_width <= E.view.col_offset) { rx += cell_width; cx += seq_len; continue; }
+        if (rx - E.view.col_offset >= text_area) break;
+
         size_t offset = line_start_byte + cx;
         uint32_t color = colors[offset - start_byte];
 
@@ -1780,7 +1796,19 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
             abAppend(ab, clr, strlen(clr));
             current_fg = color;
         }
-        abAppend(ab, &render[rx], 1);
+
+        if (line_text[cx] == '\t') {
+            for (int k = 0; k < cell_width; k++)
+                if (rx + k >= E.view.col_offset) abAppend(ab, " ", 1);
+        } else if (rx < E.view.col_offset) {
+            for (int k = 0; k < cell_width - (E.view.col_offset - rx); k++)
+                abAppend(ab, " ", 1);
+        } else {
+            abAppend(ab, cell, cell_bytes);
+        }
+
+        rx += cell_width;
+        cx += seq_len;
     }
 
     abAppend(ab, REMOVE_GRAPHICS, strlen(REMOVE_GRAPHICS));
@@ -1791,28 +1819,74 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
 void editorRefreshScreen() {
     editorScroll();
 
-    AppendBuffer ab = {
+    int total_rows = E.view.screen_rows + UI_RESERVED_ROWS;
+    if (g_prev_frame_rows != total_rows) {
+        for (int i = 0; i < g_prev_frame_rows; i++)
+            free(g_prev_frame[i].b);
+        free(g_prev_frame);
+
+        g_prev_frame = safeCalloc(total_rows, sizeof(RowCache));
+        g_prev_frame_rows = total_rows;
+    }
+
+    AppendBuffer frame = {
         .b = NULL,
         .len = 0,
-        .capacity = 0,
+        .capacity = 0
     };
-    abAppend(&ab, HIDE_CURSOR CURSOR_RESET, sizeof(HIDE_CURSOR CURSOR_RESET) - 1);
+    editorDrawRows(&frame);
+    editorDrawStatusBar(&frame);
+    editorDrawMsgBar(&frame);
 
-    editorDrawRows(&ab);
-    editorDrawStatusBar(&ab);
-    editorDrawMsgBar(&ab);
+    AppendBuffer out = { .b = NULL, .len = 0, .capacity = 0 };
+    abAppend(&out, HIDE_CURSOR, sizeof(HIDE_CURSOR) - 1);
+
+    int row = 0;
+    int seg_start = 0;
+    for (int i = 0; i <= frame.len; i++) {
+        bool at_end = (i == frame.len);
+        if (!at_end && frame.b[i] != '\n')
+            continue;
+
+        int seg_end = i;
+        if (seg_end > seg_start && frame.b[seg_end - 1] == '\r') seg_end--;
+        int seg_len = seg_end - seg_start;
+
+        if (row < total_rows) {
+            RowCache *rc = &g_prev_frame[row];
+            bool changed = !rc->valid || rc->len != seg_len || memcmp(rc->b, frame.b + seg_start, seg_len) != 0;
+            if (changed) {
+                char pos[BUFFER_SIZE_32];
+                int plen = snprintf(pos, sizeof(pos), "\x1b[%d;1H", row + 1);
+                abAppend(&out, pos, plen);
+                abAppend(&out, frame.b + seg_start, seg_len);
+                abAppend(&out, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
+
+                if (seg_len + 1 > rc->capacity) {
+                    rc->capacity = seg_len + BUFFER_SIZE_PADDING;
+                    rc->b = safeRealloc(rc->b, rc->capacity);
+                }
+                memcpy(rc->b, frame.b + seg_start, seg_len);
+                rc->len = seg_len;
+                rc->valid = true;
+            }
+        }
+        row++;
+        seg_start = i + 1;
+    }
 
     int draw_y = (E.cursor.y - E.view.row_offset) + 1;
     int draw_x = (E.cursor.render_x - E.view.col_offset) + 1 + editorGetGutterWidth();
     if (draw_y >= 1 && draw_y <= E.view.screen_rows && draw_x >= 1 && draw_x <= E.view.screen_cols) {
         char buf[BUFFER_SIZE_32];
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH", draw_y, draw_x);
-        abAppend(&ab, buf, strlen(buf));
-        abAppend(&ab, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
+        abAppend(&out, buf, strlen(buf));
+        abAppend(&out, SHOW_CURSOR, sizeof(SHOW_CURSOR) - 1);
     }
 
-    write(STDOUT_FILENO, ab.b, ab.len);
-    abFree(&ab);
+    write(STDOUT_FILENO, out.b, out.len);
+    abFree(&out);
+    abFree(&frame);
 }
 
 void editorDrawRows(AppendBuffer *ab) {
@@ -1994,6 +2068,12 @@ void editorManualScreen() {
 
     while (editorReadKey() == 0);
     write(STDOUT_FILENO, CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR, sizeof(CLEAR_SCREEN CURSOR_RESET SHOW_CURSOR) - 1);
+    editorInvalidateFrameCache();
+}
+
+void editorInvalidateFrameCache() {
+    for (int i = 0; i < g_prev_frame_rows; i++)
+        g_prev_frame[i].valid = false;
 }
 
 void editorScroll() {
@@ -4271,7 +4351,7 @@ void editorHandleCrash(int signum) {
 }
 
 bool isWordChar(int ch) {
-    if ((unsigned char)ch >= 0x80) return true;
+    if ((unsigned char)ch >= UTF8_ASCII_MAX) return true;
     return is_alnum(ch) || ch == '_';
 }
 
@@ -4344,14 +4424,14 @@ void base64Encode(const char *src, int len, char *out) {
 }
 
 bool utf8IsCont(unsigned char b) {
-    return (b & 0xC0) == 0x80;
+    return (b & UTF8_CONT_MASK) == UTF8_CONT_MARK;
 }
 
 int utf8SeqLen(unsigned char b) {
-    if (b < 0x80) return 1;
-    if ((b & 0xE0) == 0xC0) return 2;
-    if ((b & 0xF0) == 0xE0) return 3;
-    if ((b & 0xF8) == 0xF0) return 4;
+    if (b < UTF8_ASCII_MAX) return 1;
+    if ((b & UTF8_LEAD2_MASK) == UTF8_LEAD2_MARK) return 2;
+    if ((b & UTF8_LEAD3_MASK) == UTF8_LEAD3_MARK) return 3;
+    if ((b & UTF8_LEAD4_MASK) == UTF8_LEAD4_MARK) return 4;
     return 1;
 }
 
@@ -4362,14 +4442,14 @@ uint32_t utf8Decode(const char *chars, int i, int size, int *seq_len) {
 
     uint32_t cp;
     if (len == 1) cp = b;
-    else if (len == 2) cp = b & 0x1F;
-    else if (len == 3) cp = b & 0x0F;
-    else cp = b & 0x07;
+    else if (len == 2) cp = b & UTF8_LEAD2_PAYLOAD;
+    else if (len == 3) cp = b & UTF8_LEAD3_PAYLOAD;
+    else cp = b & UTF8_LEAD4_PAYLOAD;
 
     for (int k = 1; k < len; k++) {
         unsigned char cont = (unsigned char)chars[i + k];
         if (!utf8IsCont(cont)) { len = 1; cp = b; break; }
-        cp = (cp << 6) | (cont & 0x3F);
+        cp = (cp << UTF8_CONT_SHIFT) | (cont & UTF8_CONT_PAYLOAD);
     }
     *seq_len = len;
     return cp;
@@ -4377,17 +4457,9 @@ uint32_t utf8Decode(const char *chars, int i, int size, int *seq_len) {
 
 int utf8CodepointWidth(uint32_t cp) {
     if (cp == 0) return 0;
-    if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x200B && cp <= 0x200F) ||
-        (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
-        (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF))
+    if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x200B && cp <= 0x200F) || (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0x1AB0 && cp <= 0x1AFF) || (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF))
         return 0;
-    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E) ||
-        (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF) ||
-        (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF) ||
-        (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
-        (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
-        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
-        (cp >= 0x20000 && cp <= 0x3FFFD))
+    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0x303E) || (cp >= 0x3041 && cp <= 0x33FF) || (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA000 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFF60) || (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) || (cp >= 0x20000 && cp <= 0x3FFFD))
         return 2;
     return 1;
 }
@@ -4395,7 +4467,7 @@ int utf8CodepointWidth(uint32_t cp) {
 int utf8CharWidth(const char *chars, int i, int size, int *seq_len) {
     if (chars[i] == '\t') { *seq_len = 1; return 1; }
     uint32_t cp = utf8Decode(chars, i, size, seq_len);
-    if (cp < 0x20) return 1;
+    if (cp < UTF8_FIRST_PRINTABLE) return 1;
     return utf8CodepointWidth(cp);
 }
 
