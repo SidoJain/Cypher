@@ -6,7 +6,7 @@ STATIC_LIB = lib/tree-sitter/libtree-sitter.a
 FILE ?=
 
 INCLUDES = -I lib/tree-sitter/lib/include
-CFLAGS = -Wall -Wextra -pedantic -std=c99
+CFLAGS = -Wall -Wextra -Wstrict-prototypes -pedantic -std=c99
 
 LANGS = c cpp python java go json
 PARSERS = $(patsubst %,parsers/tree-sitter-%.so,$(LANGS))

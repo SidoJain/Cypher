@@ -43,7 +43,6 @@
 #define QUIT_TIMES              2
 #define SAVE_TIMES              2
 #define MIN_FILENAME_LEN        10
-#define UNDO_REDO_STACK_SIZE    100
 #define UNDO_TIMEOUT_MS         1000
 #define DOUBLE_CLICK_MS         400
 #define PARSE_DEBOUNCE_MS       50
@@ -358,15 +357,15 @@ EditorUndoRedo history;
 /*** Function Prototypes ***/
 
 // initialization
-void editorInit();
-void editorCleanup();
-void editorQuit();
+void editorInit(void);
+void editorCleanup(void);
+void editorQuit(void);
 void die(const char *);
 
 // terminal i/o
-void enableRawMode();
-void disableRawMode();
-void clearTerminal();
+void enableRawMode(void);
+void disableRawMode(void);
+void clearTerminal(void);
 void handleSigWinCh(int);
 int getWindowSize(int *, int *);
 int getCursorPosition(int *, int *);
@@ -374,9 +373,9 @@ int getCursorPosition(int *, int *);
 // input parsing
 int editorReadByte(char *);
 static void editorConsumeEscapeTail(bool);
-int editorReadKey();
+int editorReadKey(void);
 void editorProcessStandardKey(int);
-bool editorProcessKeypress();
+bool editorProcessKeypress(void);
 char *editorPrompt(char *, void (*)(const char *, int), char *);
 
 // output rendering
@@ -391,25 +390,25 @@ bool editorIsCharInBracketSpan(int, int, int, int, int, int, bool);
 bool editorIsCharSelected(int, int, int, int, int, int);
 void highlightFormatSpecifiers(size_t, size_t, uint32_t *);
 void editorDrawSingleRow(AppendBuffer *, int, size_t, uint32_t *);
-void editorRefreshScreen();
+void editorRefreshScreen(void);
 void editorDrawRows(AppendBuffer *);
 void editorSetStatusMsg(const char *);
 void editorDrawStatusBar(AppendBuffer *);
 void editorDrawMsgBar(AppendBuffer *);
 void editorDrawWelcomeMessage(AppendBuffer *);
-void editorManualScreen();
-void editorInvalidateFrameCache();
-void editorScroll();
+void editorManualScreen(void);
+void editorInvalidateFrameCache(void);
+void editorScroll(void);
 
 // cursor
 void editorMoveCursor(int);
-void editorMoveWordLeft();
-void editorMoveWordRight();
-void editorScrollPageUp();
-void editorScrollPageDown();
+void editorMoveWordLeft(void);
+void editorMoveWordRight(void);
+void editorScrollPageUp(void);
+void editorScrollPageDown(void);
 void editorScrollHorizontal(ScrollDirection);
 void editorScrollVertical(int);
-void editorJump();
+void editorJump(void);
 void editorJumpCallback(const char *, int);
 
 // piece table
@@ -436,76 +435,76 @@ IndentStrategy getIndentStrategy(const char *, size_t);
 void editorInsertChar(int);
 size_t editorGetDeleteSize(size_t);
 void editorDeleteChar(DeleteDirection);
-void editorInsertNewline();
-void editorMoveRowUp();
-void editorMoveRowDown();
-void editorCopyRowUp();
-void editorCopyRowDown();
-void editorIndentSelection();
-void editorInsertTab();
-void editorMoveToLineStart();
-void editorMoveToLineEnd();
+void editorInsertNewline(void);
+void editorMoveRowUp(void);
+void editorMoveRowDown(void);
+void editorCopyRowUp(void);
+void editorCopyRowDown(void);
+void editorIndentSelection(void);
+void editorInsertTab(void);
+void editorMoveToLineStart(void);
+void editorMoveToLineEnd(void);
 void editorLoadCommentConfig(const char *);
-const char *editorGetCommentString();
+const char *editorGetCommentString(void);
 void editorGetCommentToggleBounds(int *, int *);
 bool editorShouldUncommentBlock(int, int, const char *, size_t);
 void editorApplyCommentToggle(int, int, const char *, size_t, bool);
-void editorToggleComment();
+void editorToggleComment(void);
 
 // clipboard
 void editorSelectText(int);
-void editorSelectAll();
+void editorSelectAll(void);
 char *editorGetSelectedText(int *);
-void editorDeleteSelectedText();
-void editorCopySelection();
-void editorCutSelection();
-void editorCutLine();
+void editorDeleteSelectedText(void);
+void editorCopySelection(void);
+void editorCutSelection(void);
+void editorCutLine(void);
 void clipboardCopyToSystem(const char *, int);
 
 // find & replace
 void editorBuildMatchList(const char *);
-void editorFind();
+void editorFind(void);
 void editorFindCallback(const char *, int);
-void editorReplace();
+void editorReplace(void);
 void editorReplaceCallback(const char *, int);
 bool editorReplaceCurrent(const char *, const char *);
 int editorReplaceAll(const char *);
-void editorCenterViewOnMatch();
-void editorResetFind();
+void editorCenterViewOnMatch(void);
+void editorResetFind(void);
 
 // undo-redo
 void freeEditCommand(EditCommand *);
-void editorBeginMacro();
-void editorEndMacro();
+void editorBeginMacro(void);
+void editorEndMacro(void);
 void recordCommand(CommandType, size_t, const char *, size_t, EditorCursor);
 void executeInsert(size_t, const char *, size_t);
 void executeDelete(size_t, size_t);
-void editorUndo();
-void editorRedo();
+void editorUndo(void);
+void editorRedo(void);
 
 // bracket highlighting
 char getMatchingBracket(char);
 bool findMatchingBracketPosition(int, int, int *, int *);
-void updateMatchBracket();
+void updateMatchBracket(void);
 
 // mouse operations
-void editorMouseLeftClick();
-void editorMouseDoubleClick();
-void editorMouseDragClick();
-void editorMouseLeftRelease();
+void editorMouseLeftClick(void);
+void editorMouseDoubleClick(void);
+void editorMouseDragClick(void);
+void editorMouseLeftRelease(void);
 
 // file i/o
 void editorReadFromPipe(int, const char *);
 void editorOpen(const char *);
-void editorSave();
-void editorEmergencySave();
+void editorSave(void);
+void editorEmergencySave(void);
 void editorHandleCrash(int);
 
 // utility
 bool isWordChar(int);
-long currentMillis();
+long currentMillis(void);
 char getClosingChar(char);
-void clampCursorPosition();
+void clampCursorPosition(void);
 void humanReadableSize(size_t, char *, size_t);
 void base64Encode(const char *, int, char *);
 bool utf8IsCont(unsigned char);
@@ -517,10 +516,10 @@ int editorLineCxToRx(const char *, int, int);
 int editorLineRxToCx(const char *, int, int);
 char *editorReadFileIntoString(const char *);
 void getEditorDirectory(char *, size_t);
-void getEditorClipboardCmd();
-void editorTrimTrailingWhitespace();
-void editorUpdateWindowTitle();
-int editorGetGutterWidth();
+void getEditorClipboardCmd(void);
+void editorTrimTrailingWhitespace(void);
+void editorUpdateWindowTitle(void);
+int editorGetGutterWidth(void);
 
 // memory
 void *safeMalloc(size_t);
@@ -533,18 +532,18 @@ void abAppend(AppendBuffer *, const char *, int);
 void abFree(AppendBuffer *);
 
 // tree-sitter
-void editorInitTreeSitter();
+void editorInitTreeSitter(void);
 void editorEditTreeSitter(size_t, size_t, size_t, const char *);
-void editorParseTreeSitter();
+void editorParseTreeSitter(void);
 const char *readPieceTable(void *, uint32_t, TSPoint, uint32_t *);
 void editorLoadTheme(TSQuery *);
 void editorLoadThemeConfig(const char *);
 void editorLoadTSConfig(const char *);
 const char *editorGetLanguageName(const char *);
 TSLanguage *editorLoadLanguage(const char *);
-void editorDebugSyntaxUnderCursor();
+void editorDebugSyntaxUnderCursor(void);
 bool editorIsOffsetInStringOrComment(size_t);
-void editorFreeTreeSitter();
+void editorFreeTreeSitter(void);
 
 /*** Main ***/
 
@@ -1217,7 +1216,7 @@ bool editorProcessKeypress() {
 
         case '\t':              // tab
             if (E.sel.active)
-                editorIndentSelection(true);
+                editorIndentSelection();
             else
                 editorInsertTab();
             break;
