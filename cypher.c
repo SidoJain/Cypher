@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.4"
+#define CYPHER_VERSION      "1.8.5"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -485,6 +485,7 @@ void editorRedo(void);
 // bracket highlighting
 char getMatchingBracket(char);
 bool findMatchingBracketPosition(int, int, int *, int *);
+void editorJumpToMatchingBracket(void);
 void updateMatchBracket(void);
 
 // mouse operations
@@ -1200,6 +1201,11 @@ bool editorProcessKeypress() {
         case CTRL_KEY('e'):     // center viewport
             E.view.row_offset = E.cursor.y - (E.view.screen_rows / 2);
             if (E.view.row_offset < 0) E.view.row_offset = 0;
+            break;
+
+        case CTRL_KEY('b'):     // jump to matching bracket
+            editorJumpToMatchingBracket();
+            updateMatchBracket();
             break;
 
         case CTRL_SLASH:        // auto comment
@@ -2050,6 +2056,7 @@ void editorManualScreen() {
         "  Ctrl-E               - Center viewport",
         "  Ctrl-H               - Show manual",
         "  Ctrl-D               - Debug Tree-Sitter Capture",
+        "  Ctrl-B               - Jump to matching bracket",
         "  Ctrl-/               - Comment line",
         "  Alt-Up/Down          - Move row up / down",
         "  Shift-Alt-Up/Down    - Copy row up / down",
@@ -4046,6 +4053,19 @@ bool findMatchingBracketPosition(int cursor_y, int cursor_x, int *match_y, int *
         }
     }
     return false;
+}
+
+void editorJumpToMatchingBracket() {
+    int match_y, match_x;
+    if (!findMatchingBracketPosition(E.cursor.y, E.cursor.x, &match_y, &match_x)) {
+        editorSetStatusMsg("No matching bracket");
+        return;
+    }
+
+    E.sel.active = false;
+    E.cursor.y = match_y;
+    E.cursor.x = match_x;
+    E.cursor.preferred_x = E.cursor.x;
 }
 
 void updateMatchBracket() {

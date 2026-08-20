@@ -72,6 +72,7 @@ This README file has been completely written using Cypher.
 | `Ctrl-Z`                              | Undo last major change            |
 | `Ctrl-Y`                              | Redo last major change            |
 | `Ctrl-E`                              | Center viewport                   |
+| `Ctrl-B`                              | Jump to matching bracket          |
 | `Ctrl-D`                              | Debug Tree-Sitter Capture         |
 | `Ctrl-/`                              | Comment line                      |
 | `Arrow Keys`                          | Move cursor                       |
