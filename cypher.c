@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.5"
+#define CYPHER_VERSION      "1.8.6"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -1864,8 +1864,8 @@ void editorRefreshScreen() {
                 char pos[BUFFER_SIZE_32];
                 int plen = snprintf(pos, sizeof(pos), "\x1b[%d;1H", row + 1);
                 abAppend(&out, pos, plen);
-                abAppend(&out, frame.b + seg_start, seg_len);
                 abAppend(&out, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
+                abAppend(&out, frame.b + seg_start, seg_len);
 
                 if (seg_len + 1 > rc->capacity) {
                     rc->capacity = seg_len + BUFFER_SIZE_PADDING;
