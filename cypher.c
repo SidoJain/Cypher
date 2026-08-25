@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.7"
+#define CYPHER_VERSION      "1.8.8"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
