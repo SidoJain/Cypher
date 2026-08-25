@@ -28,7 +28,7 @@
 
 /*** Defines ***/
 
-#define CYPHER_VERSION      "1.8.6"
+#define CYPHER_VERSION      "1.8.7"
 #define EMPTY_LINE_SYMBOL   "~"
 
 #define CTRL_KEY(k)         ((k) & 0x1f)
@@ -236,6 +236,9 @@ typedef struct {
     bool dirty;
     int save_times;
     int quit_times;
+    int dirty_start_row;
+    int dirty_end_row;
+    bool needs_full_redraw;
 } EditorBuffer;
 
 typedef struct {
@@ -339,18 +342,9 @@ typedef struct {
     int save_point;
 } EditorUndoRedo;
 
-typedef struct {
-    char *b;
-    int len;
-    int capacity;
-    bool valid;
-} RowCache;
-
 /*** Global Data ***/
 
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-static RowCache *g_prev_frame = NULL;
-static int g_prev_frame_rows = 0;
 EditorConfig E;
 EditorUndoRedo history;
 
@@ -389,6 +383,7 @@ void editorGetBracketSpan(int *, int *, int *, int *, bool *);
 bool editorIsCharInBracketSpan(int, int, int, int, int, int, bool);
 bool editorIsCharSelected(int, int, int, int, int, int);
 void highlightFormatSpecifiers(size_t, size_t, uint32_t *);
+void editorMarkRowDirty(int);
 void editorDrawSingleRow(AppendBuffer *, int, size_t, uint32_t *);
 void editorRefreshScreen(void);
 void editorDrawRows(AppendBuffer *);
@@ -642,6 +637,9 @@ void editorInit() {
     E.buf.dirty = false;
     E.buf.save_times = SAVE_TIMES;
     E.buf.quit_times = QUIT_TIMES;
+    E.buf.dirty_start_row = -1;
+    E.buf.dirty_end_row = -1;
+    E.buf.needs_full_redraw = true;
     E.sel.active = false;
     E.sel.sx = 0;
     E.sel.sy = 0;
@@ -1701,6 +1699,18 @@ void highlightFormatSpecifiers(size_t start_byte, size_t end_byte, uint32_t *col
     free(text);
 }
 
+void editorMarkRowDirty(int row) {
+    if (E.buf.dirty_start_row == -1) {
+        E.buf.dirty_start_row = row;
+        E.buf.dirty_end_row = row;
+    } else {
+        if (row < E.buf.dirty_start_row)
+            E.buf.dirty_start_row = row;
+        if (row > E.buf.dirty_end_row)
+            E.buf.dirty_end_row = row;
+    }
+}
+
 void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint32_t *colors) {
     static char *line_text = NULL;
     static size_t line_cap = 0;
@@ -1824,61 +1834,14 @@ void editorDrawSingleRow(AppendBuffer *ab, int file_row, size_t start_byte, uint
 void editorRefreshScreen() {
     editorScroll();
 
-    int total_rows = E.view.screen_rows + UI_RESERVED_ROWS;
-    if (g_prev_frame_rows != total_rows) {
-        for (int i = 0; i < g_prev_frame_rows; i++)
-            free(g_prev_frame[i].b);
-        free(g_prev_frame);
-
-        g_prev_frame = safeCalloc(total_rows, sizeof(RowCache));
-        g_prev_frame_rows = total_rows;
-    }
-
-    AppendBuffer frame = {
-        .b = NULL,
-        .len = 0,
-        .capacity = 0
-    };
+    AppendBuffer frame = { .b = NULL, .len = 0, .capacity = 0 };
     editorDrawRows(&frame);
     editorDrawStatusBar(&frame);
     editorDrawMsgBar(&frame);
 
     AppendBuffer out = { .b = NULL, .len = 0, .capacity = 0 };
     abAppend(&out, HIDE_CURSOR, sizeof(HIDE_CURSOR) - 1);
-
-    int row = 0;
-    int seg_start = 0;
-    for (int i = 0; i <= frame.len; i++) {
-        bool at_end = (i == frame.len);
-        if (!at_end && frame.b[i] != '\n')
-            continue;
-
-        int seg_end = i;
-        if (seg_end > seg_start && frame.b[seg_end - 1] == '\r') seg_end--;
-        int seg_len = seg_end - seg_start;
-
-        if (row < total_rows) {
-            RowCache *rc = &g_prev_frame[row];
-            bool changed = !rc->valid || rc->len != seg_len || memcmp(rc->b, frame.b + seg_start, seg_len) != 0;
-            if (changed) {
-                char pos[BUFFER_SIZE_32];
-                int plen = snprintf(pos, sizeof(pos), "\x1b[%d;1H", row + 1);
-                abAppend(&out, pos, plen);
-                abAppend(&out, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
-                abAppend(&out, frame.b + seg_start, seg_len);
-
-                if (seg_len + 1 > rc->capacity) {
-                    rc->capacity = seg_len + BUFFER_SIZE_PADDING;
-                    rc->b = safeRealloc(rc->b, rc->capacity);
-                }
-                memcpy(rc->b, frame.b + seg_start, seg_len);
-                rc->len = seg_len;
-                rc->valid = true;
-            }
-        }
-        row++;
-        seg_start = i + 1;
-    }
+    abAppend(&out, frame.b, frame.len);
 
     int draw_y = (E.cursor.y - E.view.row_offset) + 1;
     int draw_x = (E.cursor.render_x - E.view.col_offset) + 1 + editorGetGutterWidth();
@@ -1892,6 +1855,10 @@ void editorRefreshScreen() {
     write(STDOUT_FILENO, out.b, out.len);
     abFree(&out);
     abFree(&frame);
+
+    E.buf.dirty_start_row = -1;
+    E.buf.dirty_end_row = -1;
+    E.buf.needs_full_redraw = false;
 }
 
 void editorDrawRows(AppendBuffer *ab) {
@@ -1924,6 +1891,14 @@ void editorDrawRows(AppendBuffer *ab) {
 
     for (int y = 0; y < E.view.screen_rows; y++) {
         int file_row = y + E.view.row_offset;
+        bool in_dirty_range = (file_row >= E.buf.dirty_start_row && file_row <= E.buf.dirty_end_row);
+        if (!E.buf.needs_full_redraw && E.buf.dirty_start_row != -1 && !in_dirty_range)
+            continue;
+
+        char pos[BUFFER_SIZE_32];
+        snprintf(pos, sizeof(pos), "\x1b[%d;1H", y + 1);
+        abAppend(ab, pos, strlen(pos));
+
         bool is_current_line = (file_row == E.cursor.y);
         if (file_row >= E.buf.num_lines) {
             int gutter_width = editorGetGutterWidth();
@@ -1947,6 +1922,10 @@ void editorSetStatusMsg(const char *msg) {
 }
 
 void editorDrawStatusBar(AppendBuffer *ab) {
+    char pos[BUFFER_SIZE_32];
+    snprintf(pos, sizeof(pos), "\x1b[%d;1H", E.view.screen_rows + 1);
+    abAppend(ab, pos, strlen(pos));
+
     abAppend(ab, INVERTED_COLORS, sizeof(INVERTED_COLORS) - 1);
     char status[BUFFER_SIZE_1024], rstatus[STATUS_LENGTH], lsuffix[STATUS_LENGTH];
 
@@ -1982,6 +1961,9 @@ void editorDrawStatusBar(AppendBuffer *ab) {
 }
 
 void editorDrawMsgBar(AppendBuffer *ab) {
+    char pos[BUFFER_SIZE_32];
+    snprintf(pos, sizeof(pos), "\x1b[%d;1H", E.view.screen_rows + 2);
+    abAppend(ab, pos, strlen(pos));
     abAppend(ab, CLEAR_LINE, sizeof(CLEAR_LINE) - 1);
 
     const char *lang_name = editorGetLanguageName(E.buf.filename);
@@ -2078,8 +2060,7 @@ void editorManualScreen() {
 }
 
 void editorInvalidateFrameCache() {
-    for (int i = 0; i < g_prev_frame_rows; i++)
-        g_prev_frame[i].valid = false;
+    E.buf.needs_full_redraw = true;
 }
 
 void editorScroll() {
@@ -2102,6 +2083,8 @@ void editorScroll() {
     last_cols = E.view.screen_cols;
     last_rows = E.view.screen_rows;
     if (requires_snap) {
+        int old_row_offset = E.view.row_offset;
+        int old_col_offset = E.view.col_offset;
         int active_scrolloff = SCROLLOFF;
         if (E.view.screen_rows <= active_scrolloff * 2) {
             active_scrolloff = (E.view.screen_rows - 1) / 2;
@@ -2120,6 +2103,9 @@ void editorScroll() {
             E.view.col_offset = E.cursor.render_x;
         if (E.cursor.render_x >= E.view.col_offset + text_area_width)
             E.view.col_offset = E.cursor.render_x - text_area_width + 1;
+
+        if (old_row_offset != E.view.row_offset || old_col_offset != E.view.col_offset)
+            E.buf.needs_full_redraw = true;
     }
 }
 
@@ -3889,6 +3875,18 @@ void recordCommand(CommandType type, size_t offset, const char *text, size_t len
 void executeInsert(size_t offset, const char *text, size_t len) {
     if (len == 0) return;
 
+    int row, col;
+    editorOffsetToRowCol(&E.buf, offset, &row, &col);
+    int newlines = 0;
+
+    for (size_t i = 0; i < len; i++)
+        if (text[i] == '\n')
+            newlines++;
+    if (newlines > 0)
+        E.buf.needs_full_redraw = true;
+    else
+        editorMarkRowDirty(row);
+
     recordCommand(CMD_INSERT, offset, text, len, E.cursor);
     editorEditTreeSitter(offset, 0, len, text);
     ptInsert(&E.buf.pt, offset, text, len);
@@ -3903,6 +3901,18 @@ void executeDelete(size_t offset, size_t len) {
 
     char *deleted_text = safeMalloc(len + 1);
     ptReadLogical(&E.buf.pt, offset, len, deleted_text);
+
+    int row, col;
+    editorOffsetToRowCol(&E.buf, offset, &row, &col);
+    int newlines = 0;
+
+    for (size_t i = 0; i < len; i++)
+        if (deleted_text[i] == '\n')
+            newlines++;
+    if (newlines > 0)
+        E.buf.needs_full_redraw = true;
+    else
+        editorMarkRowDirty(row);
 
     recordCommand(CMD_DELETE, offset, deleted_text, len, E.cursor);
     editorEditTreeSitter(offset, len, 0, NULL);
@@ -4803,6 +4813,7 @@ void editorParseTreeSitter() {
     if (E.ts.tree)
         ts_tree_delete(E.ts.tree);
     E.ts.tree = new_tree;
+    E.buf.needs_full_redraw = true;
 }
 
 const char *readPieceTable(void *payload, uint32_t byte_index, TSPoint position, uint32_t *bytes_read) {
